@@ -24,12 +24,19 @@
 #define TA_PQC_PING_CMD_KEM_DECAPS   6  /* take sk+ct, return ss */
 #define TA_PQC_PING_CMD_KEM_INIT     7  /* keygen; store sk in session, return only pk */
 #define TA_PQC_PING_CMD_KEM_DEC_HOST 8  /* take ct from host, decaps with session sk, return ss */
+#define TA_PQC_PING_CMD_SIG_KEYGEN   9  /* keygen; store sk in session, return only pk */
+#define TA_PQC_PING_CMD_SIG_SIGN    10  /* sign msg with session sk, return sig */
 
 /* ML-KEM-512 compile-time sizes for host-side buffer allocation */
 #define PQC_KEM_PUBLICKEYBYTES    800
 #define PQC_KEM_SECRETKEYBYTES   1632
 #define PQC_KEM_CIPHERTEXTBYTES   768
 #define PQC_KEM_SHARED_BYTES       32
+
+/* ML-DSA-44 compile-time sizes for host-side buffer allocation */
+#define PQC_SIG_PUBLICKEYBYTES   1312
+#define PQC_SIG_SECRETKEYBYTES   2560
+#define PQC_SIG_BYTES            2420
 
 struct pqc_info_out {
     uint32_t kem_pk;

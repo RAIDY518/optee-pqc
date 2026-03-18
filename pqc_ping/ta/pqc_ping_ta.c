@@ -10,12 +10,14 @@
 #include <pqc_ping_ta.h>
 #include <pqc_algo.h>
 
-/* Per-session state: holds the KEM secret key when the cross-boundary
- * workflow is used (KEM_INIT / KEM_DEC_HOST commands). sk never leaves
- * the TA — only pk is returned to the host. */
+/* Per-session state: holds KEM and SIG secret keys for cross-boundary
+ * workflows.  Neither sk ever leaves the TA — only pk is returned to
+ * the host. */
 struct pqc_session {
 	uint8_t  kem_sk[TEE_PQC_KEM_SECRETKEYBYTES];
 	uint32_t kem_sk_valid;
+	uint8_t  sig_sk[TEE_PQC_SIG_SECRETKEYBYTES];
+	uint32_t sig_sk_valid;
 };
 
 TEE_Result TA_CreateEntryPoint(void)
@@ -45,6 +47,7 @@ TEE_Result TA_OpenSessionEntryPoint(uint32_t param_types,
 		return TEE_ERROR_OUT_OF_MEMORY;
 
 	session->kem_sk_valid = 0;
+	session->sig_sk_valid = 0;
 	*sess_ctx = session;
 
 	IMSG("Hello World!\n");
@@ -248,6 +251,54 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx, uint32_t cmd_id,
 				   params[0].memref.buffer,
 				   session->kem_sk);
 		params[1].memref.size = TEE_PQC_KEM_BYTES;
+		return TEE_SUCCESS;
+	}
+
+	/*
+	 * Signature cross-boundary commands:
+	 *   SIG_KEYGEN — TA generates signing keypair; sk stored in session
+	 *                (never leaves TEE); only pk returned to host.
+	 *   SIG_SIGN   — host sends message; TA signs with session sk;
+	 *                returns signature to host for normal-world verify.
+	 */
+	case TA_PQC_PING_CMD_SIG_KEYGEN:
+	{
+		uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_OUTPUT,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE);
+		if (param_types != exp)
+			return TEE_ERROR_BAD_PARAMETERS;
+		if (params[0].memref.size < TEE_PQC_SIG_PUBLICKEYBYTES)
+			return TEE_ERROR_SHORT_BUFFER;
+
+		/* Generate keypair: pk goes to host, sk stays in session */
+		TEE_PQC_SIG_KEYPAIR(params[0].memref.buffer, session->sig_sk);
+		session->sig_sk_valid = 1;
+		params[0].memref.size = TEE_PQC_SIG_PUBLICKEYBYTES;
+		return TEE_SUCCESS;
+	}
+
+	case TA_PQC_PING_CMD_SIG_SIGN:
+	{
+		uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_INPUT,
+					       TEE_PARAM_TYPE_MEMREF_OUTPUT,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE);
+		if (param_types != exp)
+			return TEE_ERROR_BAD_PARAMETERS;
+		if (!session->sig_sk_valid)
+			return TEE_ERROR_BAD_STATE;
+		if (params[1].memref.size < TEE_PQC_SIG_BYTES)
+			return TEE_ERROR_SHORT_BUFFER;
+
+		/* Sign message with session-held sk; return sig to host */
+		size_t siglen = TEE_PQC_SIG_BYTES;
+		TEE_PQC_SIG_SIGN(params[1].memref.buffer, &siglen,
+				 params[0].memref.buffer,
+				 params[0].memref.size,
+				 session->sig_sk);
+		params[1].memref.size = (uint32_t)siglen;
 		return TEE_SUCCESS;
 	}
 
