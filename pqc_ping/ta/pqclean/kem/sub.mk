@@ -1,0 +1,10 @@
+incdirs-y += .
+srcs-y += kem.c
+srcs-y += indcpa.c
+srcs-y += poly.c
+srcs-y += polyvec.c
+srcs-y += ntt.c
+srcs-y += cbd.c
+srcs-y += reduce.c
+srcs-y += symmetric-shake.c
+srcs-y += verify.c

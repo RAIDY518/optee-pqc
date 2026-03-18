@@ -1,0 +1,70 @@
+#ifndef PQC_ALGO_H
+#define PQC_ALGO_H
+
+/* ---------- KEM ---------- */
+#if __has_include("pqclean/kem/api.h")
+#include "pqclean/kem/api.h"
+#else
+#error "pqclean/kem/api.h not found"
+#endif
+
+/* 你需要根据 api.h 里的宏名字，选一组填上 */
+#if defined(PQCLEAN_MLKEM512_CLEAN_CRYPTO_PUBLICKEYBYTES)
+
+#define TEE_PQC_KEM_PUBLICKEYBYTES   PQCLEAN_MLKEM512_CLEAN_CRYPTO_PUBLICKEYBYTES
+#define TEE_PQC_KEM_SECRETKEYBYTES   PQCLEAN_MLKEM512_CLEAN_CRYPTO_SECRETKEYBYTES
+#define TEE_PQC_KEM_CIPHERTEXTBYTES  PQCLEAN_MLKEM512_CLEAN_CRYPTO_CIPHERTEXTBYTES
+#define TEE_PQC_KEM_BYTES            PQCLEAN_MLKEM512_CLEAN_CRYPTO_BYTES
+
+#define TEE_PQC_KEM_KEYPAIR          PQCLEAN_MLKEM512_CLEAN_crypto_kem_keypair
+#define TEE_PQC_KEM_ENCAPS           PQCLEAN_MLKEM512_CLEAN_crypto_kem_enc
+#define TEE_PQC_KEM_DECAPS           PQCLEAN_MLKEM512_CLEAN_crypto_kem_dec
+
+#elif defined(PQCLEAN_KYBER512_CLEAN_CRYPTO_PUBLICKEYBYTES)
+
+#define TEE_PQC_KEM_PUBLICKEYBYTES   PQCLEAN_KYBER512_CLEAN_CRYPTO_PUBLICKEYBYTES
+#define TEE_PQC_KEM_SECRETKEYBYTES   PQCLEAN_KYBER512_CLEAN_CRYPTO_SECRETKEYBYTES
+#define TEE_PQC_KEM_CIPHERTEXTBYTES  PQCLEAN_KYBER512_CLEAN_CRYPTO_CIPHERTEXTBYTES
+#define TEE_PQC_KEM_BYTES            PQCLEAN_KYBER512_CLEAN_CRYPTO_BYTES
+
+#define TEE_PQC_KEM_KEYPAIR          PQCLEAN_KYBER512_CLEAN_crypto_kem_keypair
+#define TEE_PQC_KEM_ENCAPS           PQCLEAN_KYBER512_CLEAN_crypto_kem_enc
+#define TEE_PQC_KEM_DECAPS           PQCLEAN_KYBER512_CLEAN_crypto_kem_dec
+
+#else
+#error "Unknown KEM namespace in pqclean/kem/api.h"
+#endif
+
+
+/* ---------- SIG ---------- */
+#if __has_include("pqclean/sig/api.h")
+#include "pqclean/sig/api.h"
+#else
+#error "pqclean/sig/api.h not found"
+#endif
+
+#if defined(PQCLEAN_MLDSA44_CLEAN_CRYPTO_PUBLICKEYBYTES)
+
+#define TEE_PQC_SIG_PUBLICKEYBYTES   PQCLEAN_MLDSA44_CLEAN_CRYPTO_PUBLICKEYBYTES
+#define TEE_PQC_SIG_SECRETKEYBYTES   PQCLEAN_MLDSA44_CLEAN_CRYPTO_SECRETKEYBYTES
+#define TEE_PQC_SIG_BYTES            PQCLEAN_MLDSA44_CLEAN_CRYPTO_BYTES
+
+#define TEE_PQC_SIG_KEYPAIR          PQCLEAN_MLDSA44_CLEAN_crypto_sign_keypair
+#define TEE_PQC_SIG_SIGN             PQCLEAN_MLDSA44_CLEAN_crypto_sign_signature
+#define TEE_PQC_SIG_VERIFY           PQCLEAN_MLDSA44_CLEAN_crypto_sign_verify
+
+#elif defined(PQCLEAN_DILITHIUM2_CLEAN_CRYPTO_PUBLICKEYBYTES)
+
+#define TEE_PQC_SIG_PUBLICKEYBYTES   PQCLEAN_DILITHIUM2_CLEAN_CRYPTO_PUBLICKEYBYTES
+#define TEE_PQC_SIG_SECRETKEYBYTES   PQCLEAN_DILITHIUM2_CLEAN_CRYPTO_SECRETKEYBYTES
+#define TEE_PQC_SIG_BYTES            PQCLEAN_DILITHIUM2_CLEAN_CRYPTO_BYTES
+
+#define TEE_PQC_SIG_KEYPAIR          PQCLEAN_DILITHIUM2_CLEAN_crypto_sign_keypair
+#define TEE_PQC_SIG_SIGN             PQCLEAN_DILITHIUM2_CLEAN_crypto_sign_signature
+#define TEE_PQC_SIG_VERIFY           PQCLEAN_DILITHIUM2_CLEAN_crypto_sign_verify
+
+#else
+#error "Unknown SIG namespace in pqclean/sig/api.h"
+#endif
+
+#endif

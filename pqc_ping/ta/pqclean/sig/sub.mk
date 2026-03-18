@@ -1,0 +1,9 @@
+incdirs-y += .
+srcs-y += sign.c
+srcs-y += packing.c
+srcs-y += poly.c
+srcs-y += polyvec.c
+srcs-y += ntt.c
+srcs-y += reduce.c
+srcs-y += rounding.c
+srcs-y += symmetric-shake.c
