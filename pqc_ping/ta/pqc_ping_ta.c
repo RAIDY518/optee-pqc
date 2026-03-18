@@ -10,111 +10,57 @@
 #include <pqc_ping_ta.h>
 #include <pqc_algo.h>
 
-/*
- * Called when the instance of the TA is created. This is the first call in
- * the TA.
- */
+/* Per-session state: holds the KEM secret key when the cross-boundary
+ * workflow is used (KEM_INIT / KEM_DEC_HOST commands). sk never leaves
+ * the TA — only pk is returned to the host. */
+struct pqc_session {
+	uint8_t  kem_sk[TEE_PQC_KEM_SECRETKEYBYTES];
+	uint32_t kem_sk_valid;
+};
+
 TEE_Result TA_CreateEntryPoint(void)
 {
 	DMSG("has been called");
-
 	return TEE_SUCCESS;
 }
 
-/*
- * Called when the instance of the TA is destroyed if the TA has not
- * crashed or panicked. This is the last call in the TA.
- */
 void TA_DestroyEntryPoint(void)
 {
 	DMSG("has been called");
 }
 
-/*
- * Called when a new session is opened to the TA. *sess_ctx can be updated
- * with a value to be able to identify this session in subsequent calls to the
- * TA. In this function you will normally do the global initialization for the
- * TA.
- */
 TEE_Result TA_OpenSessionEntryPoint(uint32_t param_types,
 				    TEE_Param __unused params[4],
-				    void __unused **sess_ctx)
+				    void **sess_ctx)
 {
 	uint32_t exp_param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_NONE,
 						   TEE_PARAM_TYPE_NONE,
 						   TEE_PARAM_TYPE_NONE,
 						   TEE_PARAM_TYPE_NONE);
-
-	DMSG("has been called");
-
 	if (param_types != exp_param_types)
 		return TEE_ERROR_BAD_PARAMETERS;
 
-	/*
-	 * The DMSG() macro is non-standard, TEE Internal API doesn't
-	 * specify any means to logging from a TA.
-	 */
-	IMSG("Hello World!\n");
+	struct pqc_session *session = TEE_Malloc(sizeof(*session), 0);
+	if (!session)
+		return TEE_ERROR_OUT_OF_MEMORY;
 
-	/* If return value != TEE_SUCCESS the session will not be created. */
+	session->kem_sk_valid = 0;
+	*sess_ctx = session;
+
+	IMSG("Hello World!\n");
 	return TEE_SUCCESS;
 }
 
-/*
- * Called when a session is closed, sess_ctx hold the value that was
- * assigned by TA_OpenSessionEntryPoint().
- */
-void TA_CloseSessionEntryPoint(void __unused *sess_ctx)
+void TA_CloseSessionEntryPoint(void *sess_ctx)
 {
+	TEE_Free(sess_ctx);
 	IMSG("Goodbye!\n");
 }
 
-static TEE_Result inc_value(uint32_t param_types, TEE_Param params[4])
-{
-	uint32_t exp_param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INOUT,
-						   TEE_PARAM_TYPE_NONE,
-						   TEE_PARAM_TYPE_NONE,
-						   TEE_PARAM_TYPE_NONE);
-
-	DMSG("has been called");
-
-	if (param_types != exp_param_types)
-		return TEE_ERROR_BAD_PARAMETERS;
-
-	IMSG("Got value: %u from NW", params[0].value.a);
-	params[0].value.a++;
-	IMSG("Increase value to: %u", params[0].value.a);
-
-	return TEE_SUCCESS;
-}
-
-static TEE_Result dec_value(uint32_t param_types, TEE_Param params[4])
-{
-	uint32_t exp_param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INOUT,
-						   TEE_PARAM_TYPE_NONE,
-						   TEE_PARAM_TYPE_NONE,
-						   TEE_PARAM_TYPE_NONE);
-
-	DMSG("has been called");
-
-	if (param_types != exp_param_types)
-		return TEE_ERROR_BAD_PARAMETERS;
-
-	IMSG("Got value: %u from NW", params[0].value.a);
-	params[0].value.a--;
-	IMSG("Decrease value to: %u", params[0].value.a);
-
-	return TEE_SUCCESS;
-}
-/*
- * Called when a TA is invoked. sess_ctx hold that value that was
- * assigned by TA_OpenSessionEntryPoint(). The rest of the paramters
- * comes from normal world.
- */
 TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx, uint32_t cmd_id,
 				      uint32_t param_types, TEE_Param params[4])
 {
-	(void)sess_ctx;
+	struct pqc_session *session = (struct pqc_session *)sess_ctx;
 
 	switch (cmd_id) {
 	case TA_PQC_PING_CMD_EMPTY:
@@ -136,36 +82,29 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx, uint32_t cmd_id,
 					       TEE_PARAM_TYPE_NONE);
 		if (param_types != exp)
 			return TEE_ERROR_BAD_PARAMETERS;
-
 		params[0].value.a += 1;
 		return TEE_SUCCESS;
 	}
 
 	case TA_PQC_PING_CMD_INFO:
 	{
-		uint32_t exp = TEE_PARAM_TYPES(
-			TEE_PARAM_TYPE_MEMREF_OUTPUT,
-			TEE_PARAM_TYPE_NONE,
-			TEE_PARAM_TYPE_NONE,
-			TEE_PARAM_TYPE_NONE);
-
+		uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_OUTPUT,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE);
 		if (param_types != exp)
 			return TEE_ERROR_BAD_PARAMETERS;
-
 		if (params[0].memref.size < sizeof(struct pqc_info_out))
 			return TEE_ERROR_SHORT_BUFFER;
 
 		struct pqc_info_out *out = (struct pqc_info_out *)params[0].memref.buffer;
-
 		out->kem_pk  = TEE_PQC_KEM_PUBLICKEYBYTES;
 		out->kem_sk  = TEE_PQC_KEM_SECRETKEYBYTES;
 		out->kem_ct  = TEE_PQC_KEM_CIPHERTEXTBYTES;
 		out->kem_ss  = TEE_PQC_KEM_BYTES;
-
 		out->sig_pk  = TEE_PQC_SIG_PUBLICKEYBYTES;
 		out->sig_sk  = TEE_PQC_SIG_SECRETKEYBYTES;
 		out->sig_sig = TEE_PQC_SIG_BYTES;
-
 		params[0].memref.size = sizeof(struct pqc_info_out);
 		return TEE_SUCCESS;
 	}
@@ -261,6 +200,54 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx, uint32_t cmd_id,
 				   params[1].memref.buffer,
 				   params[0].memref.buffer);
 		params[2].memref.size = TEE_PQC_KEM_BYTES;
+		return TEE_SUCCESS;
+	}
+
+	/*
+	 * Cross-boundary workflow commands:
+	 *   KEM_INIT     — TA generates keypair; sk stored in session (never
+	 *                  leaves TEE); only pk returned to host.
+	 *   KEM_DEC_HOST — host sends ct it encapsulated in normal world; TA
+	 *                  decapsulates with session sk; returns ss to host
+	 *                  for comparison.
+	 */
+	case TA_PQC_PING_CMD_KEM_INIT:
+	{
+		uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_OUTPUT,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE);
+		if (param_types != exp)
+			return TEE_ERROR_BAD_PARAMETERS;
+		if (params[0].memref.size < TEE_PQC_KEM_PUBLICKEYBYTES)
+			return TEE_ERROR_SHORT_BUFFER;
+
+		/* Generate keypair: pk goes to host, sk stays in session */
+		TEE_PQC_KEM_KEYPAIR(params[0].memref.buffer, session->kem_sk);
+		session->kem_sk_valid = 1;
+		params[0].memref.size = TEE_PQC_KEM_PUBLICKEYBYTES;
+		return TEE_SUCCESS;
+	}
+
+	case TA_PQC_PING_CMD_KEM_DEC_HOST:
+	{
+		uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_INPUT,
+					       TEE_PARAM_TYPE_MEMREF_OUTPUT,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE);
+		if (param_types != exp)
+			return TEE_ERROR_BAD_PARAMETERS;
+		if (!session->kem_sk_valid)
+			return TEE_ERROR_BAD_STATE;
+		if (params[0].memref.size < TEE_PQC_KEM_CIPHERTEXTBYTES ||
+		    params[1].memref.size < TEE_PQC_KEM_BYTES)
+			return TEE_ERROR_SHORT_BUFFER;
+
+		/* Decapsulate using session-held sk; return ss to host */
+		TEE_PQC_KEM_DECAPS(params[1].memref.buffer,
+				   params[0].memref.buffer,
+				   session->kem_sk);
+		params[1].memref.size = TEE_PQC_KEM_BYTES;
 		return TEE_SUCCESS;
 	}
 

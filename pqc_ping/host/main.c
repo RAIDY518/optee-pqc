@@ -9,8 +9,14 @@
 #include <tee_client_api.h>
 #include <pqc_ping_ta.h>
 
+/* ML-KEM-512 encaps compiled into the host for the cross-boundary workflow */
+#include "../ta/pqclean/kem/api.h"
+
 #define DEFAULT_LOOP   100
 #define DEFAULT_WARMUP 10
+
+/* Host-side synthetic command (not a TA command ID) */
+#define HOST_CMD_KEM_CROSSTEST  100
 
 static int cmp_u64(const void *a, const void *b)
 {
@@ -52,7 +58,7 @@ static void print_stats(uint64_t *arr, size_t n, const char *tag)
 	printf("  max   = %" PRIu64 " ns\n", max);
 }
 
-/* Fill op for a single benchmark invocation of cmd. */
+/* Build a TEEC_Operation for the regular (non-crosstest) benchmark commands. */
 static void setup_op(TEEC_Operation *op, int cmd,
 		     uint8_t *pk, uint8_t *sk,
 		     uint8_t *ct, uint8_t *ss)
@@ -123,11 +129,16 @@ int main(int argc, char *argv[])
 	const char *csv_path = NULL;
 	uint32_t fail_count = 0;
 
-	/* KEM key/ciphertext buffers (used by keygen/encaps/decaps commands) */
+	/* KEM key/ciphertext buffers */
 	uint8_t kem_pk[PQC_KEM_PUBLICKEYBYTES];
 	uint8_t kem_sk[PQC_KEM_SECRETKEYBYTES];
 	uint8_t kem_ct[PQC_KEM_CIPHERTEXTBYTES];
 	uint8_t kem_ss[PQC_KEM_SHARED_BYTES];
+
+	/* Cross-boundary workflow buffers (host encaps output) */
+	uint8_t cross_ct[PQC_KEM_CIPHERTEXTBYTES];
+	uint8_t cross_ss_host[PQC_KEM_SHARED_BYTES]; /* ss from host encaps */
+	uint8_t cross_ss_ta[PQC_KEM_SHARED_BYTES];   /* ss from TA decaps   */
 
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--cmd") && i + 1 < argc) {
@@ -146,6 +157,8 @@ int main(int argc, char *argv[])
 				cmd = TA_PQC_PING_CMD_KEM_ENCAPS;
 			else if (!strcmp(argv[i], "kem-decaps"))
 				cmd = TA_PQC_PING_CMD_KEM_DECAPS;
+			else if (!strcmp(argv[i], "kem-crosstest"))
+				cmd = HOST_CMD_KEM_CROSSTEST;
 			else
 				errx(1, "unknown --cmd: %s", argv[i]);
 		} else if (!strcmp(argv[i], "--loop") && i + 1 < argc) {
@@ -155,7 +168,8 @@ int main(int argc, char *argv[])
 		} else if (!strcmp(argv[i], "--csv") && i + 1 < argc) {
 			csv_path = argv[++i];
 		} else {
-			errx(1, "usage: %s [--cmd empty|ping|info|kem-selftest|kem-keygen|kem-encaps|kem-decaps]"
+			errx(1, "usage: %s [--cmd empty|ping|info|kem-selftest|"
+				"kem-keygen|kem-encaps|kem-decaps|kem-crosstest]"
 				" [--loop N] [--warmup M] [--csv path]", argv[0]);
 		}
 	}
@@ -184,13 +198,14 @@ int main(int argc, char *argv[])
 	if (res != TEEC_SUCCESS)
 		errx(1, "TEEC_OpenSession failed 0x%x origin 0x%x", res, origin);
 
-	/* --cmd info: one-shot, not benchmarked */
+	/* ------------------------------------------------------------------ */
+	/* --cmd info: one-shot, not benchmarked                               */
+	/* ------------------------------------------------------------------ */
 	if (cmd == TA_PQC_PING_CMD_INFO) {
 		struct pqc_info_out info;
 
 		memset(&info, 0, sizeof(info));
 		memset(&op, 0, sizeof(op));
-
 		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_OUTPUT,
 						 TEEC_NONE, TEEC_NONE, TEEC_NONE);
 		op.params[0].tmpref.buffer = &info;
@@ -200,7 +215,8 @@ int main(int argc, char *argv[])
 		if (res != TEEC_SUCCESS)
 			errx(1, "info invoke failed 0x%x origin 0x%x", res, origin);
 
-		printf("KEM pk=%" PRIu32 " sk=%" PRIu32 " ct=%" PRIu32 " ss=%" PRIu32 "\n",
+		printf("KEM pk=%" PRIu32 " sk=%" PRIu32
+		       " ct=%" PRIu32 " ss=%" PRIu32 "\n",
 		       info.kem_pk, info.kem_sk, info.kem_ct, info.kem_ss);
 		printf("SIG pk=%" PRIu32 " sk=%" PRIu32 " sig=%" PRIu32 "\n",
 		       info.sig_pk, info.sig_sk, info.sig_sig);
@@ -211,11 +227,118 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	/*
-	 * Pre-bench setup for encaps/decaps: generate one keypair (and one
-	 * ciphertext for decaps) that will be reused across all iterations.
-	 * This way the loop measures only the target operation.
-	 */
+	/* ------------------------------------------------------------------ */
+	/* --cmd kem-crosstest: host-encaps -> TA-decaps cross-boundary test   */
+	/*                                                                      */
+	/* Workflow per iteration:                                              */
+	/*   1. [pre-bench] TA generates keypair; sk stays in TA session;      */
+	/*                  pk returned to host                                 */
+	/*   2. [timed]     Host runs ML-KEM-512 encaps in normal world        */
+	/*                  -> ct + ss_host                                     */
+	/*   3. [timed]     Host sends ct to TA; TA decaps with session sk     */
+	/*                  -> ss_ta                                            */
+	/*   4. [timed]     Host compares ss_host == ss_ta -> PASS/FAIL        */
+	/* ------------------------------------------------------------------ */
+	if (cmd == HOST_CMD_KEM_CROSSTEST) {
+		/* Pre-bench: TA keygen; sk stored inside TA, pk returned here */
+		memset(&op, 0, sizeof(op));
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_OUTPUT,
+						 TEEC_NONE, TEEC_NONE, TEEC_NONE);
+		op.params[0].tmpref.buffer = kem_pk;
+		op.params[0].tmpref.size   = sizeof(kem_pk);
+		res = TEEC_InvokeCommand(&sess, TA_PQC_PING_CMD_KEM_INIT,
+					 &op, &origin);
+		if (res != TEEC_SUCCESS)
+			errx(1, "kem-init failed 0x%x origin 0x%x", res, origin);
+
+		/* Warmup */
+		for (int i = 0; i < warmup; i++) {
+			/* host encaps */
+			PQCLEAN_MLKEM512_CLEAN_crypto_kem_enc(
+				cross_ct, cross_ss_host, kem_pk);
+
+			/* TA decaps */
+			memset(&op, 0, sizeof(op));
+			op.paramTypes = TEEC_PARAM_TYPES(
+				TEEC_MEMREF_TEMP_INPUT,
+				TEEC_MEMREF_TEMP_OUTPUT,
+				TEEC_NONE, TEEC_NONE);
+			op.params[0].tmpref.buffer = cross_ct;
+			op.params[0].tmpref.size   = sizeof(cross_ct);
+			op.params[1].tmpref.buffer = cross_ss_ta;
+			op.params[1].tmpref.size   = sizeof(cross_ss_ta);
+			res = TEEC_InvokeCommand(&sess,
+						 TA_PQC_PING_CMD_KEM_DEC_HOST,
+						 &op, &origin);
+			if (res != TEEC_SUCCESS)
+				errx(1, "warmup crosstest failed 0x%x origin 0x%x",
+				     res, origin);
+		}
+
+		/* Measured loop */
+		for (int i = 0; i < loop; i++) {
+			struct timespec t1, t2;
+
+			/* --- start timer --- */
+			clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
+
+			/* Step 3: host encaps in normal world */
+			PQCLEAN_MLKEM512_CLEAN_crypto_kem_enc(
+				cross_ct, cross_ss_host, kem_pk);
+
+			/* Step 4: send ct to TA; TA decaps with session sk */
+			memset(&op, 0, sizeof(op));
+			op.paramTypes = TEEC_PARAM_TYPES(
+				TEEC_MEMREF_TEMP_INPUT,
+				TEEC_MEMREF_TEMP_OUTPUT,
+				TEEC_NONE, TEEC_NONE);
+			op.params[0].tmpref.buffer = cross_ct;
+			op.params[0].tmpref.size   = sizeof(cross_ct);
+			op.params[1].tmpref.buffer = cross_ss_ta;
+			op.params[1].tmpref.size   = sizeof(cross_ss_ta);
+			res = TEEC_InvokeCommand(&sess,
+						 TA_PQC_PING_CMD_KEM_DEC_HOST,
+						 &op, &origin);
+
+			clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
+			/* --- stop timer --- */
+
+			if (res != TEEC_SUCCESS)
+				errx(1, "crosstest invoke failed 0x%x origin 0x%x",
+				     res, origin);
+
+			samples[i] = diff_ns(&t1, &t2);
+
+			/* Step 5: host compares shared secrets */
+			uint32_t pass =
+				(memcmp(cross_ss_host, cross_ss_ta,
+					PQC_KEM_SHARED_BYTES) == 0) ? 1 : 0;
+			if (!pass)
+				fail_count++;
+
+			if (csv)
+				fprintf(csv, "%d,kem-crosstest,%" PRIu64 ",%u\n",
+					i, samples[i], pass);
+		}
+
+		if (csv)
+			fclose(csv);
+
+		print_stats(samples, (size_t)loop, "KEM-CROSSTEST");
+		printf("  pass  = %u/%d\n", (unsigned)(loop - fail_count), loop);
+
+		TEEC_CloseSession(&sess);
+		TEEC_FinalizeContext(&ctx);
+		free(samples);
+		return 0;
+	}
+
+	/* ------------------------------------------------------------------ */
+	/* Regular benchmark commands (empty/ping/kem-selftest/keygen/encaps/  */
+	/* decaps): pre-bench setup, warmup, measured loop, stats.             */
+	/* ------------------------------------------------------------------ */
+
+	/* Pre-bench setup for encaps (needs pk) and decaps (needs sk+ct) */
 	if (cmd == TA_PQC_PING_CMD_KEM_ENCAPS ||
 	    cmd == TA_PQC_PING_CMD_KEM_DECAPS) {
 		memset(&op, 0, sizeof(op));

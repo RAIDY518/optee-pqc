@@ -22,6 +22,8 @@
 #define TA_PQC_PING_CMD_KEM_KEYGEN   4  /* generate keypair, return pk+sk */
 #define TA_PQC_PING_CMD_KEM_ENCAPS   5  /* take pk, return ct+ss */
 #define TA_PQC_PING_CMD_KEM_DECAPS   6  /* take sk+ct, return ss */
+#define TA_PQC_PING_CMD_KEM_INIT     7  /* keygen; store sk in session, return only pk */
+#define TA_PQC_PING_CMD_KEM_DEC_HOST 8  /* take ct from host, decaps with session sk, return ss */
 
 /* ML-KEM-512 compile-time sizes for host-side buffer allocation */
 #define PQC_KEM_PUBLICKEYBYTES    800
