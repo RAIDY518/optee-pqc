@@ -9,175 +9,53 @@
 #include <tee_client_api.h>
 #include <pqc_ping_ta.h>
 
-/* ML-KEM-512 encaps compiled into the host for the KEM cross-boundary workflow */
-#include "../ta/pqclean/kem/api.h"
-/* ML-DSA-44 verify compiled into the host for the SIG cross-boundary workflow */
-#include "../ta/pqclean/sig/api.h"
+#include "bench.h"
+#include "cmd_kem.h"
+#include "cmd_sig.h"
 
 #define DEFAULT_LOOP   100
 #define DEFAULT_WARMUP 10
 
-/* Host-side synthetic commands (not TA command IDs) */
-#define HOST_CMD_KEM_CROSSTEST  100
-#define HOST_CMD_SIG_CROSSTEST  101
-
-/* Fixed test message for sig-sign and sig-crosstest benchmarks */
-static const uint8_t SIG_TEST_MSG[]  = "pqc-day6-test-message";
-#define SIG_TEST_MSG_LEN (sizeof(SIG_TEST_MSG) - 1)
-
-static int cmp_u64(const void *a, const void *b)
-{
-	uint64_t x = *(const uint64_t *)a;
-	uint64_t y = *(const uint64_t *)b;
-	return (x > y) - (x < y);
-}
-
-static uint64_t diff_ns(const struct timespec *s, const struct timespec *e)
-{
-	return (uint64_t)(e->tv_sec - s->tv_sec) * 1000000000ULL +
-	       (uint64_t)(e->tv_nsec - s->tv_nsec);
-}
-
-static void print_stats(uint64_t *arr, size_t n, const char *tag)
-{
-	uint64_t min = arr[0], max = arr[0];
-	__uint128_t sum = 0;
-
-	for (size_t i = 0; i < n; i++) {
-		if (arr[i] < min) min = arr[i];
-		if (arr[i] > max) max = arr[i];
-		sum += arr[i];
-	}
-
-	qsort(arr, n, sizeof(arr[0]), cmp_u64);
-
-	uint64_t p50 = arr[(size_t)(0.50 * (n - 1))];
-	uint64_t p95 = arr[(size_t)(0.95 * (n - 1))];
-	uint64_t p99 = arr[(size_t)(0.99 * (n - 1))];
-	double avg = (double)sum / (double)n;
-
-	printf("[%s] n=%zu\n", tag, n);
-	printf("  min   = %" PRIu64 " ns\n", min);
-	printf("  avg   = %.2f ns\n", avg);
-	printf("  p50   = %" PRIu64 " ns\n", p50);
-	printf("  p95   = %" PRIu64 " ns\n", p95);
-	printf("  p99   = %" PRIu64 " ns\n", p99);
-	printf("  max   = %" PRIu64 " ns\n", max);
-}
-
-/* Build a TEEC_Operation for the regular (non-crosstest) benchmark commands. */
-static void setup_op(TEEC_Operation *op, int cmd,
-		     uint8_t *pk, uint8_t *sk,
-		     uint8_t *ct, uint8_t *ss)
-{
-	memset(op, 0, sizeof(*op));
-	switch (cmd) {
-	case TA_PQC_PING_CMD_PING:
-		op->paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_INOUT,
-						  TEEC_NONE, TEEC_NONE, TEEC_NONE);
-		op->params[0].value.a = 41;
-		break;
-	case TA_PQC_PING_CMD_KEM_SELFTEST:
-		op->paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_OUTPUT,
-						  TEEC_NONE, TEEC_NONE, TEEC_NONE);
-		break;
-	case TA_PQC_PING_CMD_KEM_KEYGEN:
-		op->paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_OUTPUT,
-						  TEEC_MEMREF_TEMP_OUTPUT,
-						  TEEC_NONE, TEEC_NONE);
-		op->params[0].tmpref.buffer = pk;
-		op->params[0].tmpref.size   = PQC_KEM_PUBLICKEYBYTES;
-		op->params[1].tmpref.buffer = sk;
-		op->params[1].tmpref.size   = PQC_KEM_SECRETKEYBYTES;
-		break;
-	case TA_PQC_PING_CMD_KEM_ENCAPS:
-		op->paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
-						  TEEC_MEMREF_TEMP_OUTPUT,
-						  TEEC_MEMREF_TEMP_OUTPUT,
-						  TEEC_NONE);
-		op->params[0].tmpref.buffer = pk;
-		op->params[0].tmpref.size   = PQC_KEM_PUBLICKEYBYTES;
-		op->params[1].tmpref.buffer = ct;
-		op->params[1].tmpref.size   = PQC_KEM_CIPHERTEXTBYTES;
-		op->params[2].tmpref.buffer = ss;
-		op->params[2].tmpref.size   = PQC_KEM_SHARED_BYTES;
-		break;
-	case TA_PQC_PING_CMD_KEM_DECAPS:
-		op->paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
-						  TEEC_MEMREF_TEMP_INPUT,
-						  TEEC_MEMREF_TEMP_OUTPUT,
-						  TEEC_NONE);
-		op->params[0].tmpref.buffer = sk;
-		op->params[0].tmpref.size   = PQC_KEM_SECRETKEYBYTES;
-		op->params[1].tmpref.buffer = ct;
-		op->params[1].tmpref.size   = PQC_KEM_CIPHERTEXTBYTES;
-		op->params[2].tmpref.buffer = ss;
-		op->params[2].tmpref.size   = PQC_KEM_SHARED_BYTES;
-		break;
-	default: /* empty */
-		op->paramTypes = TEEC_PARAM_TYPES(TEEC_NONE,
-						  TEEC_NONE, TEEC_NONE, TEEC_NONE);
-		break;
-	}
-}
-
 int main(int argc, char *argv[])
 {
-	TEEC_Result res;
+	TEEC_Result  res;
 	TEEC_Context ctx;
 	TEEC_Session sess;
 	TEEC_Operation op;
-	uint32_t origin;
-	TEEC_UUID uuid = TA_PQC_PING_UUID;
+	TEEC_UUID    uuid = TA_PQC_PING_UUID;
 
-	int cmd = TA_PQC_PING_CMD_PING;
-	int loop = DEFAULT_LOOP;
-	int warmup = DEFAULT_WARMUP;
-	const char *csv_path = NULL;
-	uint32_t fail_count = 0;
+	int          cmd    = TA_PQC_PING_CMD_PING;
+	int          loop   = DEFAULT_LOOP;
+	int          warmup = DEFAULT_WARMUP;
+	const char  *csv_path = NULL;
 
-	/* KEM key/ciphertext buffers */
+	/* KEM buffers */
 	uint8_t kem_pk[PQC_KEM_PUBLICKEYBYTES];
 	uint8_t kem_sk[PQC_KEM_SECRETKEYBYTES];
 	uint8_t kem_ct[PQC_KEM_CIPHERTEXTBYTES];
 	uint8_t kem_ss[PQC_KEM_SHARED_BYTES];
-
-	/* KEM cross-boundary workflow buffers */
 	uint8_t cross_ct[PQC_KEM_CIPHERTEXTBYTES];
-	uint8_t cross_ss_host[PQC_KEM_SHARED_BYTES]; /* ss from host encaps */
-	uint8_t cross_ss_ta[PQC_KEM_SHARED_BYTES];   /* ss from TA decaps   */
-
-	/* SIG key/signature buffers */
+	uint8_t cross_ss_host[PQC_KEM_SHARED_BYTES];
+	uint8_t cross_ss_ta[PQC_KEM_SHARED_BYTES];
+	/* SIG buffers */
 	uint8_t sig_pk[PQC_SIG_PUBLICKEYBYTES];
 	uint8_t sig_buf[PQC_SIG_BYTES];
 
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--cmd") && i + 1 < argc) {
 			i++;
-			if (!strcmp(argv[i], "empty"))
-				cmd = TA_PQC_PING_CMD_EMPTY;
-			else if (!strcmp(argv[i], "ping"))
-				cmd = TA_PQC_PING_CMD_PING;
-			else if (!strcmp(argv[i], "info"))
-				cmd = TA_PQC_PING_CMD_INFO;
-			else if (!strcmp(argv[i], "kem-selftest"))
-				cmd = TA_PQC_PING_CMD_KEM_SELFTEST;
-			else if (!strcmp(argv[i], "kem-keygen"))
-				cmd = TA_PQC_PING_CMD_KEM_KEYGEN;
-			else if (!strcmp(argv[i], "kem-encaps"))
-				cmd = TA_PQC_PING_CMD_KEM_ENCAPS;
-			else if (!strcmp(argv[i], "kem-decaps"))
-				cmd = TA_PQC_PING_CMD_KEM_DECAPS;
-			else if (!strcmp(argv[i], "kem-crosstest"))
-				cmd = HOST_CMD_KEM_CROSSTEST;
-			else if (!strcmp(argv[i], "sig-keygen"))
-				cmd = TA_PQC_PING_CMD_SIG_KEYGEN;
-			else if (!strcmp(argv[i], "sig-sign"))
-				cmd = TA_PQC_PING_CMD_SIG_SIGN;
-			else if (!strcmp(argv[i], "sig-crosstest"))
-				cmd = HOST_CMD_SIG_CROSSTEST;
-			else
-				errx(1, "unknown --cmd: %s", argv[i]);
+			if      (!strcmp(argv[i], "empty"))         cmd = TA_PQC_PING_CMD_EMPTY;
+			else if (!strcmp(argv[i], "ping"))          cmd = TA_PQC_PING_CMD_PING;
+			else if (!strcmp(argv[i], "info"))          cmd = TA_PQC_PING_CMD_INFO;
+			else if (!strcmp(argv[i], "kem-selftest"))  cmd = TA_PQC_PING_CMD_KEM_SELFTEST;
+			else if (!strcmp(argv[i], "kem-keygen"))    cmd = TA_PQC_PING_CMD_KEM_KEYGEN;
+			else if (!strcmp(argv[i], "kem-encaps"))    cmd = TA_PQC_PING_CMD_KEM_ENCAPS;
+			else if (!strcmp(argv[i], "kem-decaps"))    cmd = TA_PQC_PING_CMD_KEM_DECAPS;
+			else if (!strcmp(argv[i], "kem-crosstest")) cmd = HOST_CMD_KEM_CROSSTEST;
+			else if (!strcmp(argv[i], "sig-keygen"))    cmd = TA_PQC_PING_CMD_SIG_KEYGEN;
+			else if (!strcmp(argv[i], "sig-sign"))      cmd = TA_PQC_PING_CMD_SIG_SIGN;
+			else if (!strcmp(argv[i], "sig-crosstest")) cmd = HOST_CMD_SIG_CROSSTEST;
+			else errx(1, "unknown --cmd: %s", argv[i]);
 		} else if (!strcmp(argv[i], "--loop") && i + 1 < argc) {
 			loop = atoi(argv[++i]);
 		} else if (!strcmp(argv[i], "--warmup") && i + 1 < argc) {
@@ -211,419 +89,92 @@ int main(int argc, char *argv[])
 	if (res != TEEC_SUCCESS)
 		errx(1, "TEEC_InitializeContext failed 0x%x", res);
 
+	uint32_t origin;
 	res = TEEC_OpenSession(&ctx, &sess, &uuid, TEEC_LOGIN_PUBLIC,
 			       NULL, NULL, &origin);
 	if (res != TEEC_SUCCESS)
 		errx(1, "TEEC_OpenSession failed 0x%x origin 0x%x", res, origin);
 
-	/* ------------------------------------------------------------------ */
-	/* --cmd info: one-shot, not benchmarked                               */
-	/* ------------------------------------------------------------------ */
+	/* --cmd info: one-shot, not benchmarked */
 	if (cmd == TA_PQC_PING_CMD_INFO) {
 		struct pqc_info_out info;
-
 		memset(&info, 0, sizeof(info));
 		memset(&op, 0, sizeof(op));
 		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_OUTPUT,
 						 TEEC_NONE, TEEC_NONE, TEEC_NONE);
 		op.params[0].tmpref.buffer = &info;
 		op.params[0].tmpref.size   = sizeof(info);
-
 		res = TEEC_InvokeCommand(&sess, cmd, &op, &origin);
 		if (res != TEEC_SUCCESS)
 			errx(1, "info invoke failed 0x%x origin 0x%x", res, origin);
-
 		printf("KEM pk=%" PRIu32 " sk=%" PRIu32
 		       " ct=%" PRIu32 " ss=%" PRIu32 "\n",
 		       info.kem_pk, info.kem_sk, info.kem_ct, info.kem_ss);
 		printf("SIG pk=%" PRIu32 " sk=%" PRIu32 " sig=%" PRIu32 "\n",
 		       info.sig_pk, info.sig_sk, info.sig_sig);
-
-		TEEC_CloseSession(&sess);
-		TEEC_FinalizeContext(&ctx);
-		free(samples);
-		return 0;
+		goto done;
 	}
 
-	/* ------------------------------------------------------------------ */
-	/* --cmd kem-crosstest: host-encaps -> TA-decaps cross-boundary test   */
-	/*                                                                      */
-	/* Workflow per iteration:                                              */
-	/*   1. [pre-bench] TA generates keypair; sk stays in TA session;      */
-	/*                  pk returned to host                                 */
-	/*   2. [timed]     Host runs ML-KEM-512 encaps in normal world        */
-	/*                  -> ct + ss_host                                     */
-	/*   3. [timed]     Host sends ct to TA; TA decaps with session sk     */
-	/*                  -> ss_ta                                            */
-	/*   4. [timed]     Host compares ss_host == ss_ta -> PASS/FAIL        */
-	/* ------------------------------------------------------------------ */
-	if (cmd == HOST_CMD_KEM_CROSSTEST) {
-		/* Pre-bench: TA keygen; sk stored inside TA, pk returned here */
-		memset(&op, 0, sizeof(op));
-		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_OUTPUT,
-						 TEEC_NONE, TEEC_NONE, TEEC_NONE);
-		op.params[0].tmpref.buffer = kem_pk;
-		op.params[0].tmpref.size   = sizeof(kem_pk);
-		res = TEEC_InvokeCommand(&sess, TA_PQC_PING_CMD_KEM_INIT,
-					 &op, &origin);
-		if (res != TEEC_SUCCESS)
-			errx(1, "kem-init failed 0x%x origin 0x%x", res, origin);
+	/* Build shared benchmark context */
+	struct bench_ctx bctx = {
+		.sess         = &sess,
+		.samples      = samples,
+		.csv          = csv,
+		.loop         = loop,
+		.warmup       = warmup,
+		.fail_count   = 0,
+		.kem_pk       = kem_pk,
+		.kem_sk       = kem_sk,
+		.kem_ct       = kem_ct,
+		.kem_ss       = kem_ss,
+		.cross_ct     = cross_ct,
+		.cross_ss_host = cross_ss_host,
+		.cross_ss_ta   = cross_ss_ta,
+		.sig_pk       = sig_pk,
+		.sig_buf      = sig_buf,
+	};
+	bctx.origin = origin;
 
-		/* Warmup */
-		for (int i = 0; i < warmup; i++) {
-			/* host encaps */
-			PQCLEAN_MLKEM512_CLEAN_crypto_kem_enc(
-				cross_ct, cross_ss_host, kem_pk);
+	/* Dispatch cross-boundary and sig commands */
+	if (cmd == HOST_CMD_KEM_CROSSTEST) { run_kem_crosstest(&bctx); goto done; }
+	if (cmd == TA_PQC_PING_CMD_SIG_KEYGEN) { run_sig_keygen(&bctx);   goto done; }
+	if (cmd == TA_PQC_PING_CMD_SIG_SIGN)   { run_sig_sign(&bctx);     goto done; }
+	if (cmd == HOST_CMD_SIG_CROSSTEST)     { run_sig_crosstest(&bctx); goto done; }
 
-			/* TA decaps */
-			memset(&op, 0, sizeof(op));
-			op.paramTypes = TEEC_PARAM_TYPES(
-				TEEC_MEMREF_TEMP_INPUT,
-				TEEC_MEMREF_TEMP_OUTPUT,
-				TEEC_NONE, TEEC_NONE);
-			op.params[0].tmpref.buffer = cross_ct;
-			op.params[0].tmpref.size   = sizeof(cross_ct);
-			op.params[1].tmpref.buffer = cross_ss_ta;
-			op.params[1].tmpref.size   = sizeof(cross_ss_ta);
-			res = TEEC_InvokeCommand(&sess,
-						 TA_PQC_PING_CMD_KEM_DEC_HOST,
-						 &op, &origin);
-			if (res != TEEC_SUCCESS)
-				errx(1, "warmup crosstest failed 0x%x origin 0x%x",
-				     res, origin);
-		}
-
-		/* Measured loop */
-		for (int i = 0; i < loop; i++) {
-			struct timespec t1, t2;
-
-			/* --- start timer --- */
-			clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
-
-			/* Step 3: host encaps in normal world */
-			PQCLEAN_MLKEM512_CLEAN_crypto_kem_enc(
-				cross_ct, cross_ss_host, kem_pk);
-
-			/* Step 4: send ct to TA; TA decaps with session sk */
-			memset(&op, 0, sizeof(op));
-			op.paramTypes = TEEC_PARAM_TYPES(
-				TEEC_MEMREF_TEMP_INPUT,
-				TEEC_MEMREF_TEMP_OUTPUT,
-				TEEC_NONE, TEEC_NONE);
-			op.params[0].tmpref.buffer = cross_ct;
-			op.params[0].tmpref.size   = sizeof(cross_ct);
-			op.params[1].tmpref.buffer = cross_ss_ta;
-			op.params[1].tmpref.size   = sizeof(cross_ss_ta);
-			res = TEEC_InvokeCommand(&sess,
-						 TA_PQC_PING_CMD_KEM_DEC_HOST,
-						 &op, &origin);
-
-			clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
-			/* --- stop timer --- */
-
-			if (res != TEEC_SUCCESS)
-				errx(1, "crosstest invoke failed 0x%x origin 0x%x",
-				     res, origin);
-
-			samples[i] = diff_ns(&t1, &t2);
-
-			/* Step 5: host compares shared secrets */
-			uint32_t pass =
-				(memcmp(cross_ss_host, cross_ss_ta,
-					PQC_KEM_SHARED_BYTES) == 0) ? 1 : 0;
-			if (!pass)
-				fail_count++;
-
-			if (csv)
-				fprintf(csv, "%d,kem-crosstest,%" PRIu64 ",%u\n",
-					i, samples[i], pass);
-		}
-
-		if (csv)
-			fclose(csv);
-
-		print_stats(samples, (size_t)loop, "KEM-CROSSTEST");
-		printf("  pass  = %u/%d\n", (unsigned)(loop - fail_count), loop);
-
-		TEEC_CloseSession(&sess);
-		TEEC_FinalizeContext(&ctx);
-		free(samples);
-		return 0;
-	}
-
-	/* ------------------------------------------------------------------ */
-	/* --cmd sig-keygen: benchmark TA keypair generation.                 */
-	/* Each iteration: TA generates a new keypair; sk stored in session;  */
-	/* pk returned to host.  No pre-bench required.                       */
-	/* ------------------------------------------------------------------ */
-	if (cmd == TA_PQC_PING_CMD_SIG_KEYGEN) {
-		/* Warmup */
-		for (int i = 0; i < warmup; i++) {
-			memset(&op, 0, sizeof(op));
-			op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_OUTPUT,
-							 TEEC_NONE,
-							 TEEC_NONE, TEEC_NONE);
-			op.params[0].tmpref.buffer = sig_pk;
-			op.params[0].tmpref.size   = sizeof(sig_pk);
-			res = TEEC_InvokeCommand(&sess,
-						 TA_PQC_PING_CMD_SIG_KEYGEN,
-						 &op, &origin);
-			if (res != TEEC_SUCCESS)
-				errx(1, "sig-keygen warmup failed 0x%x origin 0x%x",
-				     res, origin);
-		}
-
-		for (int i = 0; i < loop; i++) {
-			struct timespec t1, t2;
-			memset(&op, 0, sizeof(op));
-			op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_OUTPUT,
-							 TEEC_NONE,
-							 TEEC_NONE, TEEC_NONE);
-			op.params[0].tmpref.buffer = sig_pk;
-			op.params[0].tmpref.size   = sizeof(sig_pk);
-
-			clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
-			res = TEEC_InvokeCommand(&sess,
-						 TA_PQC_PING_CMD_SIG_KEYGEN,
-						 &op, &origin);
-			clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
-
-			if (res != TEEC_SUCCESS)
-				errx(1, "sig-keygen invoke failed 0x%x origin 0x%x",
-				     res, origin);
-
-			samples[i] = diff_ns(&t1, &t2);
-			if (csv)
-				fprintf(csv, "%d,sig-keygen,%" PRIu64 ",1\n",
-					i, samples[i]);
-		}
-
-		if (csv) fclose(csv);
-		print_stats(samples, (size_t)loop, "SIG-KEYGEN");
-		TEEC_CloseSession(&sess);
-		TEEC_FinalizeContext(&ctx);
-		free(samples);
-		return 0;
-	}
-
-	/* ------------------------------------------------------------------ */
-	/* --cmd sig-sign: benchmark TA signing.                              */
-	/* Pre-bench: TA_SIG_KEYGEN (session sk populated).                   */
-	/* Each iteration: TA signs fixed test message with session sk.       */
-	/* ------------------------------------------------------------------ */
-	if (cmd == TA_PQC_PING_CMD_SIG_SIGN) {
-		/* Pre-bench: populate session sk */
-		memset(&op, 0, sizeof(op));
-		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_OUTPUT,
-						 TEEC_NONE, TEEC_NONE, TEEC_NONE);
-		op.params[0].tmpref.buffer = sig_pk;
-		op.params[0].tmpref.size   = sizeof(sig_pk);
-		res = TEEC_InvokeCommand(&sess, TA_PQC_PING_CMD_SIG_KEYGEN,
-					 &op, &origin);
-		if (res != TEEC_SUCCESS)
-			errx(1, "sig-sign pre-bench keygen failed 0x%x origin 0x%x",
-			     res, origin);
-
-		/* Warmup */
-		for (int i = 0; i < warmup; i++) {
-			memset(&op, 0, sizeof(op));
-			op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
-							 TEEC_MEMREF_TEMP_OUTPUT,
-							 TEEC_NONE, TEEC_NONE);
-			op.params[0].tmpref.buffer = (void *)SIG_TEST_MSG;
-			op.params[0].tmpref.size   = SIG_TEST_MSG_LEN;
-			op.params[1].tmpref.buffer = sig_buf;
-			op.params[1].tmpref.size   = sizeof(sig_buf);
-			res = TEEC_InvokeCommand(&sess,
-						 TA_PQC_PING_CMD_SIG_SIGN,
-						 &op, &origin);
-			if (res != TEEC_SUCCESS)
-				errx(1, "sig-sign warmup failed 0x%x origin 0x%x",
-				     res, origin);
-		}
-
-		for (int i = 0; i < loop; i++) {
-			struct timespec t1, t2;
-			memset(&op, 0, sizeof(op));
-			op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
-							 TEEC_MEMREF_TEMP_OUTPUT,
-							 TEEC_NONE, TEEC_NONE);
-			op.params[0].tmpref.buffer = (void *)SIG_TEST_MSG;
-			op.params[0].tmpref.size   = SIG_TEST_MSG_LEN;
-			op.params[1].tmpref.buffer = sig_buf;
-			op.params[1].tmpref.size   = sizeof(sig_buf);
-
-			clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
-			res = TEEC_InvokeCommand(&sess,
-						 TA_PQC_PING_CMD_SIG_SIGN,
-						 &op, &origin);
-			clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
-
-			if (res != TEEC_SUCCESS)
-				errx(1, "sig-sign invoke failed 0x%x origin 0x%x",
-				     res, origin);
-
-			samples[i] = diff_ns(&t1, &t2);
-			if (csv)
-				fprintf(csv, "%d,sig-sign,%" PRIu64 ",1\n",
-					i, samples[i]);
-		}
-
-		if (csv) fclose(csv);
-		print_stats(samples, (size_t)loop, "SIG-SIGN");
-		TEEC_CloseSession(&sess);
-		TEEC_FinalizeContext(&ctx);
-		free(samples);
-		return 0;
-	}
-
-	/* ------------------------------------------------------------------ */
-	/* --cmd sig-crosstest: TA sign + host verify cross-boundary test.    */
-	/*                                                                     */
-	/* Workflow:                                                           */
-	/*   [pre-bench] TA generates signing keypair; sk stays in TA session;*/
-	/*               pk returned to host.                                  */
-	/*   [timed]     Host sends fixed message to TA → TA signs with       */
-	/*               session sk → sig returned.                            */
-	/*   [timed]     Host calls ML-DSA-44 verify(sig, msg, pk) → 0=PASS  */
-	/* ------------------------------------------------------------------ */
-	if (cmd == HOST_CMD_SIG_CROSSTEST) {
-		/* Pre-bench: TA keygen; sk stored in session, pk returned */
-		memset(&op, 0, sizeof(op));
-		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_OUTPUT,
-						 TEEC_NONE, TEEC_NONE, TEEC_NONE);
-		op.params[0].tmpref.buffer = sig_pk;
-		op.params[0].tmpref.size   = sizeof(sig_pk);
-		res = TEEC_InvokeCommand(&sess, TA_PQC_PING_CMD_SIG_KEYGEN,
-					 &op, &origin);
-		if (res != TEEC_SUCCESS)
-			errx(1, "sig-crosstest keygen failed 0x%x origin 0x%x",
-			     res, origin);
-
-		/* Warmup */
-		for (int i = 0; i < warmup; i++) {
-			memset(&op, 0, sizeof(op));
-			op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
-							 TEEC_MEMREF_TEMP_OUTPUT,
-							 TEEC_NONE, TEEC_NONE);
-			op.params[0].tmpref.buffer = (void *)SIG_TEST_MSG;
-			op.params[0].tmpref.size   = SIG_TEST_MSG_LEN;
-			op.params[1].tmpref.buffer = sig_buf;
-			op.params[1].tmpref.size   = sizeof(sig_buf);
-			res = TEEC_InvokeCommand(&sess,
-						 TA_PQC_PING_CMD_SIG_SIGN,
-						 &op, &origin);
-			if (res != TEEC_SUCCESS)
-				errx(1, "sig-crosstest warmup sign failed 0x%x origin 0x%x",
-				     res, origin);
-		}
-
-		/* Measured loop */
-		for (int i = 0; i < loop; i++) {
-			struct timespec t1, t2;
-			size_t siglen;
-
-			/* TA sign */
-			memset(&op, 0, sizeof(op));
-			op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
-							 TEEC_MEMREF_TEMP_OUTPUT,
-							 TEEC_NONE, TEEC_NONE);
-			op.params[0].tmpref.buffer = (void *)SIG_TEST_MSG;
-			op.params[0].tmpref.size   = SIG_TEST_MSG_LEN;
-			op.params[1].tmpref.buffer = sig_buf;
-			op.params[1].tmpref.size   = sizeof(sig_buf);
-
-			clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
-
-			res = TEEC_InvokeCommand(&sess,
-						 TA_PQC_PING_CMD_SIG_SIGN,
-						 &op, &origin);
-
-			if (res != TEEC_SUCCESS)
-				errx(1, "sig-crosstest sign failed 0x%x origin 0x%x",
-				     res, origin);
-
-			/* Host verify in normal world */
-			siglen = op.params[1].tmpref.size;
-			int vret = PQCLEAN_MLDSA44_CLEAN_crypto_sign_verify(
-					sig_buf, siglen,
-					SIG_TEST_MSG, SIG_TEST_MSG_LEN,
-					sig_pk);
-
-			clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
-
-			samples[i] = diff_ns(&t1, &t2);
-			uint32_t pass = (vret == 0) ? 1 : 0;
-			if (!pass)
-				fail_count++;
-
-			if (csv)
-				fprintf(csv, "%d,sig-crosstest,%" PRIu64 ",%u\n",
-					i, samples[i], pass);
-		}
-
-		if (csv) fclose(csv);
-		print_stats(samples, (size_t)loop, "SIG-CROSSTEST");
-		printf("  pass  = %u/%d\n", (unsigned)(loop - fail_count), loop);
-
-		TEEC_CloseSession(&sess);
-		TEEC_FinalizeContext(&ctx);
-		free(samples);
-		return 0;
-	}
-
-	/* ------------------------------------------------------------------ */
-	/* Regular benchmark commands (empty/ping/kem-selftest/keygen/encaps/  */
-	/* decaps): pre-bench setup, warmup, measured loop, stats.             */
-	/* ------------------------------------------------------------------ */
-
-	/* Pre-bench setup for encaps (needs pk) and decaps (needs sk+ct) */
+	/* Regular KEM benchmark commands (empty/ping/kem-selftest/keygen/encaps/decaps) */
 	if (cmd == TA_PQC_PING_CMD_KEM_ENCAPS ||
 	    cmd == TA_PQC_PING_CMD_KEM_DECAPS) {
 		memset(&op, 0, sizeof(op));
 		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_OUTPUT,
 						 TEEC_MEMREF_TEMP_OUTPUT,
 						 TEEC_NONE, TEEC_NONE);
-		op.params[0].tmpref.buffer = kem_pk;
-		op.params[0].tmpref.size   = sizeof(kem_pk);
-		op.params[1].tmpref.buffer = kem_sk;
-		op.params[1].tmpref.size   = sizeof(kem_sk);
-		res = TEEC_InvokeCommand(&sess, TA_PQC_PING_CMD_KEM_KEYGEN,
-					 &op, &origin);
+		op.params[0].tmpref.buffer = kem_pk; op.params[0].tmpref.size = sizeof(kem_pk);
+		op.params[1].tmpref.buffer = kem_sk; op.params[1].tmpref.size = sizeof(kem_sk);
+		res = TEEC_InvokeCommand(&sess, TA_PQC_PING_CMD_KEM_KEYGEN, &op, &origin);
 		if (res != TEEC_SUCCESS)
-			errx(1, "pre-bench keygen failed 0x%x origin 0x%x",
-			     res, origin);
+			errx(1, "pre-bench keygen failed 0x%x", res);
 	}
-
 	if (cmd == TA_PQC_PING_CMD_KEM_DECAPS) {
 		memset(&op, 0, sizeof(op));
 		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
 						 TEEC_MEMREF_TEMP_OUTPUT,
 						 TEEC_MEMREF_TEMP_OUTPUT,
 						 TEEC_NONE);
-		op.params[0].tmpref.buffer = kem_pk;
-		op.params[0].tmpref.size   = sizeof(kem_pk);
-		op.params[1].tmpref.buffer = kem_ct;
-		op.params[1].tmpref.size   = sizeof(kem_ct);
-		op.params[2].tmpref.buffer = kem_ss;
-		op.params[2].tmpref.size   = sizeof(kem_ss);
-		res = TEEC_InvokeCommand(&sess, TA_PQC_PING_CMD_KEM_ENCAPS,
-					 &op, &origin);
+		op.params[0].tmpref.buffer = kem_pk; op.params[0].tmpref.size = sizeof(kem_pk);
+		op.params[1].tmpref.buffer = kem_ct; op.params[1].tmpref.size = sizeof(kem_ct);
+		op.params[2].tmpref.buffer = kem_ss; op.params[2].tmpref.size = sizeof(kem_ss);
+		res = TEEC_InvokeCommand(&sess, TA_PQC_PING_CMD_KEM_ENCAPS, &op, &origin);
 		if (res != TEEC_SUCCESS)
-			errx(1, "pre-bench encaps failed 0x%x origin 0x%x",
-			     res, origin);
+			errx(1, "pre-bench encaps failed 0x%x", res);
 	}
 
-	/* Warmup */
 	for (int i = 0; i < warmup; i++) {
-		setup_op(&op, cmd, kem_pk, kem_sk, kem_ct, kem_ss);
+		setup_kem_op(&op, cmd, kem_pk, kem_sk, kem_ct, kem_ss);
 		res = TEEC_InvokeCommand(&sess, cmd, &op, &origin);
 		if (res != TEEC_SUCCESS)
-			errx(1, "warmup invoke failed 0x%x origin 0x%x",
-			     res, origin);
+			errx(1, "warmup invoke failed 0x%x", res);
 	}
 
-	/* Measured loop */
 	const char *cmd_str;
 	switch (cmd) {
 	case TA_PQC_PING_CMD_EMPTY:        cmd_str = "empty";        break;
@@ -634,39 +185,37 @@ int main(int argc, char *argv[])
 	default:                           cmd_str = "ping";          break;
 	}
 
+	uint32_t fail_count = 0;
 	for (int i = 0; i < loop; i++) {
 		struct timespec t1, t2;
-
-		setup_op(&op, cmd, kem_pk, kem_sk, kem_ct, kem_ss);
+		setup_kem_op(&op, cmd, kem_pk, kem_sk, kem_ct, kem_ss);
 
 		clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
 		res = TEEC_InvokeCommand(&sess, cmd, &op, &origin);
 		clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
 
 		if (res != TEEC_SUCCESS)
-			errx(1, "invoke failed 0x%x origin 0x%x", res, origin);
+			errx(1, "invoke failed 0x%x", res);
 
 		samples[i] = diff_ns(&t1, &t2);
 
 		uint32_t pass = 1;
 		if (cmd == TA_PQC_PING_CMD_KEM_SELFTEST) {
 			pass = (op.params[0].value.a == 0) ? 1 : 0;
-			if (!pass)
-				fail_count++;
+			if (!pass) fail_count++;
 		}
-
 		if (csv)
 			fprintf(csv, "%d,%s,%" PRIu64 ",%u\n",
 				i, cmd_str, samples[i], pass);
 	}
 
-	if (csv)
-		fclose(csv);
-
 	print_stats(samples, (size_t)loop, cmd_str);
 	if (cmd == TA_PQC_PING_CMD_KEM_SELFTEST)
 		printf("  pass  = %u/%d\n", (unsigned)(loop - fail_count), loop);
 
+done:
+	if (csv)
+		fclose(csv);
 	TEEC_CloseSession(&sess);
 	TEEC_FinalizeContext(&ctx);
 	free(samples);
