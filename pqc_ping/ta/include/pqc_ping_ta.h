@@ -27,6 +27,22 @@
 #define TA_PQC_PING_CMD_SIG_KEYGEN   9  /* keygen; store sk in session, return only pk */
 #define TA_PQC_PING_CMD_SIG_SIGN    10  /* sign msg with session sk, return sig */
 
+/* Secure storage / key lifecycle commands */
+#define TA_PQC_PING_CMD_KEM_KEYGEN_SAVE 11 /* keygen + persist sk; return pk */
+#define TA_PQC_PING_CMD_KEM_LOAD        12 /* restore sk from secure storage */
+#define TA_PQC_PING_CMD_KEM_STATUS      13 /* report key state (value out) */
+#define TA_PQC_PING_CMD_KEM_DESTROY     14 /* wipe memory + delete storage */
+#define TA_PQC_PING_CMD_SIG_KEYGEN_SAVE 15 /* keygen + persist sk; return pk */
+#define TA_PQC_PING_CMD_SIG_LOAD        16 /* restore sk from secure storage */
+#define TA_PQC_PING_CMD_SIG_STATUS      17 /* report key state (value out) */
+#define TA_PQC_PING_CMD_SIG_DESTROY     18 /* wipe memory + delete storage */
+
+/* Key status bits (returned by KEM_STATUS / SIG_STATUS) */
+#define PQC_KEY_ABSENT    0  /* no key in memory, not persisted */
+#define PQC_KEY_IN_MEMORY 1  /* key loaded in session */
+#define PQC_KEY_PERSISTED 2  /* key exists in secure storage */
+#define PQC_KEY_READY     3  /* in-memory AND persisted */
+
 /* ML-KEM-512 compile-time sizes for host-side buffer allocation */
 #define PQC_KEM_PUBLICKEYBYTES    800
 #define PQC_KEM_SECRETKEYBYTES   1632

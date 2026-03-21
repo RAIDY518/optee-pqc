@@ -12,6 +12,7 @@
 #include "bench.h"
 #include "cmd_kem.h"
 #include "cmd_sig.h"
+#include "cmd_store.h"
 
 #define DEFAULT_LOOP   100
 #define DEFAULT_WARMUP 10
@@ -54,7 +55,15 @@ int main(int argc, char *argv[])
 			else if (!strcmp(argv[i], "kem-crosstest")) cmd = HOST_CMD_KEM_CROSSTEST;
 			else if (!strcmp(argv[i], "sig-keygen"))    cmd = TA_PQC_PING_CMD_SIG_KEYGEN;
 			else if (!strcmp(argv[i], "sig-sign"))      cmd = TA_PQC_PING_CMD_SIG_SIGN;
-			else if (!strcmp(argv[i], "sig-crosstest")) cmd = HOST_CMD_SIG_CROSSTEST;
+			else if (!strcmp(argv[i], "sig-crosstest"))    cmd = HOST_CMD_SIG_CROSSTEST;
+			else if (!strcmp(argv[i], "kem-keygen-save")) cmd = TA_PQC_PING_CMD_KEM_KEYGEN_SAVE;
+			else if (!strcmp(argv[i], "kem-load"))        cmd = TA_PQC_PING_CMD_KEM_LOAD;
+			else if (!strcmp(argv[i], "kem-status"))      cmd = TA_PQC_PING_CMD_KEM_STATUS;
+			else if (!strcmp(argv[i], "kem-destroy"))     cmd = TA_PQC_PING_CMD_KEM_DESTROY;
+			else if (!strcmp(argv[i], "sig-keygen-save")) cmd = TA_PQC_PING_CMD_SIG_KEYGEN_SAVE;
+			else if (!strcmp(argv[i], "sig-load"))        cmd = TA_PQC_PING_CMD_SIG_LOAD;
+			else if (!strcmp(argv[i], "sig-status"))      cmd = TA_PQC_PING_CMD_SIG_STATUS;
+			else if (!strcmp(argv[i], "sig-destroy"))     cmd = TA_PQC_PING_CMD_SIG_DESTROY;
 			else errx(1, "unknown --cmd: %s", argv[i]);
 		} else if (!strcmp(argv[i], "--loop") && i + 1 < argc) {
 			loop = atoi(argv[++i]);
@@ -136,10 +145,20 @@ int main(int argc, char *argv[])
 	bctx.origin = origin;
 
 	/* Dispatch cross-boundary and sig commands */
-	if (cmd == HOST_CMD_KEM_CROSSTEST) { run_kem_crosstest(&bctx); goto done; }
-	if (cmd == TA_PQC_PING_CMD_SIG_KEYGEN) { run_sig_keygen(&bctx);   goto done; }
-	if (cmd == TA_PQC_PING_CMD_SIG_SIGN)   { run_sig_sign(&bctx);     goto done; }
-	if (cmd == HOST_CMD_SIG_CROSSTEST)     { run_sig_crosstest(&bctx); goto done; }
+	if (cmd == HOST_CMD_KEM_CROSSTEST)      { run_kem_crosstest(&bctx);  goto done; }
+	if (cmd == TA_PQC_PING_CMD_SIG_KEYGEN) { run_sig_keygen(&bctx);     goto done; }
+	if (cmd == TA_PQC_PING_CMD_SIG_SIGN)   { run_sig_sign(&bctx);       goto done; }
+	if (cmd == HOST_CMD_SIG_CROSSTEST)     { run_sig_crosstest(&bctx);   goto done; }
+
+	/* Dispatch key lifecycle commands */
+	if (cmd == TA_PQC_PING_CMD_KEM_KEYGEN_SAVE) { run_kem_keygen_save(&bctx); goto done; }
+	if (cmd == TA_PQC_PING_CMD_KEM_LOAD)        { run_kem_load(&bctx);        goto done; }
+	if (cmd == TA_PQC_PING_CMD_KEM_STATUS)      { run_kem_status(&bctx);      goto done; }
+	if (cmd == TA_PQC_PING_CMD_KEM_DESTROY)     { run_kem_destroy(&bctx);     goto done; }
+	if (cmd == TA_PQC_PING_CMD_SIG_KEYGEN_SAVE) { run_sig_keygen_save(&bctx); goto done; }
+	if (cmd == TA_PQC_PING_CMD_SIG_LOAD)        { run_sig_load(&bctx);        goto done; }
+	if (cmd == TA_PQC_PING_CMD_SIG_STATUS)      { run_sig_status(&bctx);      goto done; }
+	if (cmd == TA_PQC_PING_CMD_SIG_DESTROY)     { run_sig_destroy(&bctx);     goto done; }
 
 	/* Regular KEM benchmark commands (empty/ping/kem-selftest/keygen/encaps/decaps) */
 	if (cmd == TA_PQC_PING_CMD_KEM_ENCAPS ||

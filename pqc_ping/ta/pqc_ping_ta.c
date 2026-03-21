@@ -107,6 +107,9 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx, uint32_t cmd_id,
 		if (cmd_id == TA_PQC_PING_CMD_SIG_KEYGEN ||
 		    cmd_id == TA_PQC_PING_CMD_SIG_SIGN)
 			return ta_cmd_sig(cmd_id, param_types, params, session);
+		if (cmd_id >= TA_PQC_PING_CMD_KEM_KEYGEN_SAVE &&
+		    cmd_id <= TA_PQC_PING_CMD_SIG_DESTROY)
+			return ta_cmd_store(cmd_id, param_types, params, session);
 		return TEE_ERROR_BAD_PARAMETERS;
 	}
 }
