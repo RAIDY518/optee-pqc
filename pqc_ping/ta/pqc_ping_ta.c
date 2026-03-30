@@ -34,18 +34,26 @@ TEE_Result TA_OpenSessionEntryPoint(uint32_t param_types,
 	if (!session)
 		return TEE_ERROR_OUT_OF_MEMORY;
 
+#ifdef PQC_ENABLE_KEM
 	session->kem_sk_valid = 0;
+#endif
+#ifdef PQC_ENABLE_SIG
 	session->sig_sk_valid = 0;
+#endif
 	*sess_ctx = session;
 
-	IMSG("Hello World!\n");
+	DMSG("session opened");
 	return TEE_SUCCESS;
 }
 
 void TA_CloseSessionEntryPoint(void *sess_ctx)
 {
-	TEE_Free(sess_ctx);
-	IMSG("Goodbye!\n");
+	if (sess_ctx) {
+		struct pqc_session *s = (struct pqc_session *)sess_ctx;
+		TEE_MemFill(s, 0, sizeof(*s));
+		TEE_Free(s);
+	}
+	DMSG("session closed");
 }
 
 TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx, uint32_t cmd_id,
@@ -90,13 +98,18 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx, uint32_t cmd_id,
 
 		struct pqc_info_out *out =
 			(struct pqc_info_out *)params[0].memref.buffer;
+		TEE_MemFill(out, 0, sizeof(*out));
+#ifdef PQC_ENABLE_KEM
 		out->kem_pk  = TEE_PQC_KEM_PUBLICKEYBYTES;
 		out->kem_sk  = TEE_PQC_KEM_SECRETKEYBYTES;
 		out->kem_ct  = TEE_PQC_KEM_CIPHERTEXTBYTES;
 		out->kem_ss  = TEE_PQC_KEM_BYTES;
+#endif
+#ifdef PQC_ENABLE_SIG
 		out->sig_pk  = TEE_PQC_SIG_PUBLICKEYBYTES;
 		out->sig_sk  = TEE_PQC_SIG_SECRETKEYBYTES;
 		out->sig_sig = TEE_PQC_SIG_BYTES;
+#endif
 		params[0].memref.size = sizeof(struct pqc_info_out);
 		return TEE_SUCCESS;
 	}
@@ -135,14 +148,7 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx, uint32_t cmd_id,
 		return TEE_SUCCESS;
 	}
 
-	/*
-	 * Stress commands — all buffers on TA stack (not heap).
-	 * These represent peak stack pressure for memory profiling.
-	 *
-	 * KEM stack footprint: pk(800) + sk(1632) + ct(768) + ss_enc(32) + ss_dec(32) = 3264 B
-	 * SIG stack footprint: pk(1312) + sk(2560) + sig(2420) = 6292 B
-	 * Plus internal call-chain stack usage from the crypto library.
-	 */
+#ifdef PQC_ENABLE_KEM
 	case TA_PQC_PING_CMD_KEM_STRESS:
 	{
 		uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_OUTPUT,
@@ -165,9 +171,15 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx, uint32_t cmd_id,
 		params[0].value.a =
 			(TEE_MemCompare(ss_enc, ss_dec, TEE_PQC_KEM_BYTES) == 0)
 			? 0 : 1;
+
+		TEE_MemFill(sk, 0, TEE_PQC_KEM_SECRETKEYBYTES);
+		TEE_MemFill(ss_enc, 0, TEE_PQC_KEM_BYTES);
+		TEE_MemFill(ss_dec, 0, TEE_PQC_KEM_BYTES);
 		return TEE_SUCCESS;
 	}
+#endif /* PQC_ENABLE_KEM */
 
+#ifdef PQC_ENABLE_SIG
 	case TA_PQC_PING_CMD_SIG_STRESS:
 	{
 		uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_OUTPUT,
@@ -191,22 +203,31 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx, uint32_t cmd_id,
 					       msg, sizeof(msg) - 1, pk);
 
 		params[0].value.a = (vret == 0) ? 0 : 1;
+
+		TEE_MemFill(sk, 0, TEE_PQC_SIG_SECRETKEYBYTES);
 		return TEE_SUCCESS;
 	}
+#endif /* PQC_ENABLE_SIG */
 
 	default:
+#ifdef PQC_ENABLE_KEM
 		if (cmd_id >= TA_PQC_PING_CMD_KEM_SELFTEST &&
 		    cmd_id <= TA_PQC_PING_CMD_KEM_DEC_HOST)
 			return ta_cmd_kem(cmd_id, param_types, params, session);
+#endif
+#ifdef PQC_ENABLE_SIG
 		if (cmd_id == TA_PQC_PING_CMD_SIG_KEYGEN ||
 		    cmd_id == TA_PQC_PING_CMD_SIG_SIGN)
 			return ta_cmd_sig(cmd_id, param_types, params, session);
+#endif
+#if defined(PQC_ENABLE_KEM) || defined(PQC_ENABLE_SIG)
 		if (cmd_id >= TA_PQC_PING_CMD_KEM_KEYGEN_SAVE &&
 		    cmd_id <= TA_PQC_PING_CMD_SIG_GET_PK)
 			return ta_cmd_store(cmd_id, param_types, params, session);
 		if (cmd_id >= TA_PQC_PING_CMD_KEM_KEYGEN_MICRO &&
 		    cmd_id <= TA_PQC_PING_CMD_SIG_SIGN_MICRO)
 			return ta_cmd_bench(cmd_id, param_types, params);
+#endif
 		return TEE_ERROR_BAD_PARAMETERS;
 	}
 }

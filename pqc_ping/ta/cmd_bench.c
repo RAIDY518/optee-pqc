@@ -59,6 +59,7 @@ TEE_Result ta_cmd_bench(uint32_t cmd_id, uint32_t param_types,
 
 	switch (cmd_id) {
 
+#ifdef PQC_ENABLE_KEM
 	/* ---- ML-KEM-512 keygen ----------------------------------------- */
 	case TA_PQC_PING_CMD_KEM_KEYGEN_MICRO:
 	{
@@ -80,6 +81,7 @@ TEE_Result ta_cmd_bench(uint32_t cmd_id, uint32_t param_types,
 				TEE_PQC_KEM_KEYPAIR(pk, sk);
 			ticks[i] = now_ms() - t0;
 		}
+		TEE_MemFill(sk, 0, TEE_PQC_KEM_SECRETKEYBYTES);
 		TEE_Free(pk);
 		TEE_Free(sk);
 		break;
@@ -111,11 +113,16 @@ TEE_Result ta_cmd_bench(uint32_t cmd_id, uint32_t param_types,
 				TEE_PQC_KEM_DECAPS(ss, ct, sk);
 			ticks[i] = now_ms() - t0;
 		}
+		TEE_MemFill(sk, 0, TEE_PQC_KEM_SECRETKEYBYTES);
+		TEE_MemFill(ss, 0, TEE_PQC_KEM_BYTES);
 		TEE_Free(pk); TEE_Free(sk);
 		TEE_Free(ct); TEE_Free(ss);
 		break;
 	}
 
+#endif /* PQC_ENABLE_KEM */
+
+#ifdef PQC_ENABLE_SIG
 	/* ---- ML-DSA-44 keygen ------------------------------------------ */
 	case TA_PQC_PING_CMD_SIG_KEYGEN_MICRO:
 	{
@@ -135,6 +142,7 @@ TEE_Result ta_cmd_bench(uint32_t cmd_id, uint32_t param_types,
 				TEE_PQC_SIG_KEYPAIR(pk, sk);
 			ticks[i] = now_ms() - t0;
 		}
+		TEE_MemFill(sk, 0, TEE_PQC_SIG_SECRETKEYBYTES);
 		TEE_Free(pk);
 		TEE_Free(sk);
 		break;
@@ -148,6 +156,7 @@ TEE_Result ta_cmd_bench(uint32_t cmd_id, uint32_t param_types,
 		uint8_t *sk  = TEE_Malloc(TEE_PQC_SIG_SECRETKEYBYTES, 0);
 		uint8_t *sig = TEE_Malloc(TEE_PQC_SIG_BYTES,           0);
 		if (!pk || !sk || !sig) {
+			if (sk) TEE_MemFill(sk, 0, TEE_PQC_SIG_SECRETKEYBYTES);
 			TEE_Free(pk); TEE_Free(sk); TEE_Free(sig);
 			return TEE_ERROR_OUT_OF_MEMORY;
 		}
@@ -170,9 +179,12 @@ TEE_Result ta_cmd_bench(uint32_t cmd_id, uint32_t param_types,
 			}
 			ticks[i] = now_ms() - t0;
 		}
+		TEE_MemFill(sk, 0, TEE_PQC_SIG_SECRETKEYBYTES);
 		TEE_Free(pk); TEE_Free(sk); TEE_Free(sig);
 		break;
 	}
+
+#endif /* PQC_ENABLE_SIG */
 
 	default:
 		return TEE_ERROR_BAD_PARAMETERS;

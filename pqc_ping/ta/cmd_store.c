@@ -4,14 +4,18 @@
 #include "ta_internal.h"
 
 /* Persistent object IDs — sk and pk stored separately */
+#ifdef PQC_ENABLE_KEM
 static const char KEM_SK_ID[] = "pqc_kem_sk";
 static const char KEM_PK_ID[] = "pqc_kem_pk";
-static const char SIG_SK_ID[] = "pqc_sig_sk";
-static const char SIG_PK_ID[] = "pqc_sig_pk";
 #define KEM_SK_ID_LEN (sizeof(KEM_SK_ID) - 1)
 #define KEM_PK_ID_LEN (sizeof(KEM_PK_ID) - 1)
+#endif
+#ifdef PQC_ENABLE_SIG
+static const char SIG_SK_ID[] = "pqc_sig_sk";
+static const char SIG_PK_ID[] = "pqc_sig_pk";
 #define SIG_SK_ID_LEN (sizeof(SIG_SK_ID) - 1)
 #define SIG_PK_ID_LEN (sizeof(SIG_PK_ID) - 1)
+#endif
 
 /* Write raw bytes to a persistent data object (overwrite if exists). */
 static TEE_Result store_write(const char *id, uint32_t id_len,
@@ -82,6 +86,7 @@ TEE_Result ta_cmd_store(uint32_t cmd_id, uint32_t param_types,
 {
 	switch (cmd_id) {
 
+#ifdef PQC_ENABLE_KEM
 	/* ---- KEM lifecycle -------------------------------------------- */
 
 	case TA_PQC_PING_CMD_KEM_KEYGEN_SAVE:
@@ -122,8 +127,12 @@ TEE_Result ta_cmd_store(uint32_t cmd_id, uint32_t param_types,
 		TEE_Result res = store_read(KEM_SK_ID, KEM_SK_ID_LEN,
 					    session->kem_sk,
 					    TEE_PQC_KEM_SECRETKEYBYTES);
-		if (res == TEE_SUCCESS)
+		if (res == TEE_SUCCESS) {
 			session->kem_sk_valid = 1;
+		} else {
+			TEE_MemFill(session->kem_sk, 0, TEE_PQC_KEM_SECRETKEYBYTES);
+			session->kem_sk_valid = 0;
+		}
 		return res;
 	}
 
@@ -180,6 +189,9 @@ TEE_Result ta_cmd_store(uint32_t cmd_id, uint32_t param_types,
 		return res;
 	}
 
+#endif /* PQC_ENABLE_KEM */
+
+#ifdef PQC_ENABLE_SIG
 	/* ---- SIG lifecycle -------------------------------------------- */
 
 	case TA_PQC_PING_CMD_SIG_KEYGEN_SAVE:
@@ -219,8 +231,12 @@ TEE_Result ta_cmd_store(uint32_t cmd_id, uint32_t param_types,
 		TEE_Result res = store_read(SIG_SK_ID, SIG_SK_ID_LEN,
 					    session->sig_sk,
 					    TEE_PQC_SIG_SECRETKEYBYTES);
-		if (res == TEE_SUCCESS)
+		if (res == TEE_SUCCESS) {
 			session->sig_sk_valid = 1;
+		} else {
+			TEE_MemFill(session->sig_sk, 0, TEE_PQC_SIG_SECRETKEYBYTES);
+			session->sig_sk_valid = 0;
+		}
 		return res;
 	}
 
@@ -276,6 +292,8 @@ TEE_Result ta_cmd_store(uint32_t cmd_id, uint32_t param_types,
 			params[0].memref.size = TEE_PQC_SIG_PUBLICKEYBYTES;
 		return res;
 	}
+
+#endif /* PQC_ENABLE_SIG */
 
 	default:
 		return TEE_ERROR_BAD_PARAMETERS;

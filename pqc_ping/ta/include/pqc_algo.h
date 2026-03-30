@@ -2,13 +2,14 @@
 #define PQC_ALGO_H
 
 /* ---------- KEM ---------- */
+#ifdef PQC_ENABLE_KEM
+
 #if __has_include("pqclean/kem/api.h")
 #include "pqclean/kem/api.h"
 #else
 #error "pqclean/kem/api.h not found"
 #endif
 
-/* 你需要根据 api.h 里的宏名字，选一组填上 */
 #if defined(PQCLEAN_MLKEM512_CLEAN_CRYPTO_PUBLICKEYBYTES)
 
 #define TEE_PQC_KEM_PUBLICKEYBYTES   PQCLEAN_MLKEM512_CLEAN_CRYPTO_PUBLICKEYBYTES
@@ -35,8 +36,12 @@
 #error "Unknown KEM namespace in pqclean/kem/api.h"
 #endif
 
+#endif /* PQC_ENABLE_KEM */
+
 
 /* ---------- SIG ---------- */
+#ifdef PQC_ENABLE_SIG
+
 #if __has_include("pqclean/sig/api.h")
 #include "pqclean/sig/api.h"
 #else
@@ -66,5 +71,7 @@
 #else
 #error "Unknown SIG namespace in pqclean/sig/api.h"
 #endif
+
+#endif /* PQC_ENABLE_SIG */
 
 #endif
