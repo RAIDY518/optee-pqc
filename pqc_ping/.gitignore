@@ -13,5 +13,8 @@ results/logs/
 results/csv/
 results/summary/
 
+# Claude Code local settings
+.claude/
+
 # Backup files
 *.bak
