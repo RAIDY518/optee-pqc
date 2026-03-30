@@ -1,0 +1,17 @@
+# Build outputs
+host/optee_example_pqc_ping
+host/pqc_ping
+host/*.o
+ta/*.o
+ta/*.elf
+ta/*.dmp
+ta/*.ta
+ta/*.stripped.elf
+
+# Results (generated on target)
+results/logs/
+results/csv/
+results/summary/
+
+# Backup files
+*.bak
