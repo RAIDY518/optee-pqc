@@ -34,6 +34,10 @@ TEE_Result ta_cmd_sig(uint32_t cmd_id, uint32_t param_types,
 			return TEE_ERROR_BAD_PARAMETERS;
 		if (!session->sig_sk_valid)
 			return TEE_ERROR_BAD_STATE;
+		/* Reject empty or oversized messages */
+		if (params[0].memref.size == 0 ||
+		    params[0].memref.size > 4096)
+			return TEE_ERROR_BAD_PARAMETERS;
 		if (params[1].memref.size < TEE_PQC_SIG_BYTES)
 			return TEE_ERROR_SHORT_BUFFER;
 

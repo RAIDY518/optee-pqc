@@ -20,7 +20,7 @@ SIG_OBJS  := s-sign.o s-packing.o s-poly.o s-polyvec.o s-ntt.o \
 
 COMM_OBJS := fips202.o
 
-HOST_OBJS := main.o bench.o cmd_kem.o cmd_sig.o cmd_store.o cmd_bench.o randombytes_host.o
+HOST_OBJS := main.o bench.o cmd_kem.o cmd_sig.o cmd_store.o cmd_bench.o cmd_harden.o randombytes_host.o
 
 OBJS := $(HOST_OBJS) $(KEM_OBJS) $(SIG_OBJS) $(COMM_OBJS)
 
@@ -56,6 +56,9 @@ cmd_kem.o: cmd_kem.c
 
 cmd_sig.o: cmd_sig.c
 	$(CC) $(SIG_CFLAGS) -c $< -o $@
+
+cmd_harden.o: cmd_harden.c
+	$(CC) $(CFLAGS) -I$(KEM_DIR) -I$(SIG_DIR) -c $< -o $@
 
 # Generic rule for remaining host sources (bench.o, randombytes_host.o)
 %.o: %.c

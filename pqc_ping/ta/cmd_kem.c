@@ -23,6 +23,7 @@ TEE_Result ta_cmd_kem(uint32_t cmd_id, uint32_t param_types,
 		uint8_t *ss_dec = TEE_Malloc(TEE_PQC_KEM_BYTES,           0);
 
 		if (!pk || !sk || !ct || !ss_enc || !ss_dec) {
+			if (sk) TEE_MemFill(sk, 0, TEE_PQC_KEM_SECRETKEYBYTES);
 			TEE_Free(pk); TEE_Free(sk); TEE_Free(ct);
 			TEE_Free(ss_enc); TEE_Free(ss_dec);
 			return TEE_ERROR_OUT_OF_MEMORY;
@@ -36,6 +37,9 @@ TEE_Result ta_cmd_kem(uint32_t cmd_id, uint32_t param_types,
 			(TEE_MemCompare(ss_enc, ss_dec, TEE_PQC_KEM_BYTES) == 0)
 			? 0 : 1;
 
+		TEE_MemFill(sk, 0, TEE_PQC_KEM_SECRETKEYBYTES);
+		TEE_MemFill(ss_enc, 0, TEE_PQC_KEM_BYTES);
+		TEE_MemFill(ss_dec, 0, TEE_PQC_KEM_BYTES);
 		TEE_Free(pk); TEE_Free(sk); TEE_Free(ct);
 		TEE_Free(ss_enc); TEE_Free(ss_dec);
 		return TEE_SUCCESS;
@@ -128,8 +132,10 @@ TEE_Result ta_cmd_kem(uint32_t cmd_id, uint32_t param_types,
 			return TEE_ERROR_BAD_PARAMETERS;
 		if (!session->kem_sk_valid)
 			return TEE_ERROR_BAD_STATE;
-		if (params[0].memref.size < TEE_PQC_KEM_CIPHERTEXTBYTES ||
-		    params[1].memref.size < TEE_PQC_KEM_BYTES)
+		/* Reject wrong-sized ciphertext (short or oversized) */
+		if (params[0].memref.size != TEE_PQC_KEM_CIPHERTEXTBYTES)
+			return TEE_ERROR_BAD_PARAMETERS;
+		if (params[1].memref.size < TEE_PQC_KEM_BYTES)
 			return TEE_ERROR_SHORT_BUFFER;
 
 		TEE_PQC_KEM_DECAPS(params[1].memref.buffer,

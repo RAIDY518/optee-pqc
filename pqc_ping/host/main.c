@@ -14,6 +14,7 @@
 #include "cmd_sig.h"
 #include "cmd_store.h"
 #include "cmd_bench.h"
+#include "cmd_harden.h"
 
 #define DEFAULT_LOOP   100
 #define DEFAULT_WARMUP 10
@@ -74,6 +75,7 @@ int main(int argc, char *argv[])
 			else if (!strcmp(argv[i], "mem-info"))              cmd = TA_PQC_PING_CMD_MEM_INFO;
 			else if (!strcmp(argv[i], "kem-stress"))            cmd = TA_PQC_PING_CMD_KEM_STRESS;
 			else if (!strcmp(argv[i], "sig-stress"))            cmd = TA_PQC_PING_CMD_SIG_STRESS;
+			else if (!strcmp(argv[i], "harden-test"))           cmd = HOST_CMD_HARDEN_TEST;
 			else errx(1, "unknown --cmd: %s", argv[i]);
 		} else if (!strcmp(argv[i], "--loop") && i + 1 < argc) {
 			loop = atoi(argv[++i]);
@@ -243,6 +245,7 @@ int main(int argc, char *argv[])
 	if (cmd == TA_PQC_PING_CMD_SIG_DESTROY)     { run_sig_destroy(&bctx);     goto done; }
 	if (cmd == HOST_CMD_KEM_VALIDATE)                { run_kem_validate(&bctx);    goto done; }
 	if (cmd == HOST_CMD_SIG_VALIDATE)                { run_sig_validate(&bctx);    goto done; }
+	if (cmd == HOST_CMD_HARDEN_TEST)                 { run_harden_test(&bctx);     goto done; }
 	if (cmd == TA_PQC_PING_CMD_KEM_KEYGEN_MICRO)     { run_kem_keygen_micro(&bctx); goto done; }
 	if (cmd == TA_PQC_PING_CMD_KEM_DECAPS_MICRO)     { run_kem_decaps_micro(&bctx); goto done; }
 	if (cmd == TA_PQC_PING_CMD_SIG_KEYGEN_MICRO)     { run_sig_keygen_micro(&bctx); goto done; }
@@ -321,6 +324,13 @@ int main(int argc, char *argv[])
 		printf("  pass  = %u/%d\n", (unsigned)(loop - fail_count), loop);
 
 done:
+	/* Zeroize sensitive host-side buffers */
+	memset(kem_sk, 0, sizeof(kem_sk));
+	memset(kem_ss, 0, sizeof(kem_ss));
+	memset(cross_ss_host, 0, sizeof(cross_ss_host));
+	memset(cross_ss_ta, 0, sizeof(cross_ss_ta));
+	memset(sig_buf, 0, sizeof(sig_buf));
+
 	if (csv)
 		fclose(csv);
 	TEEC_CloseSession(&sess);
