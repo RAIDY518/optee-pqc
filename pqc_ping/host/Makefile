@@ -20,7 +20,7 @@ SIG_OBJS  := s-sign.o s-packing.o s-poly.o s-polyvec.o s-ntt.o \
 
 COMM_OBJS := fips202.o
 
-HOST_OBJS := main.o bench.o cmd_kem.o cmd_sig.o cmd_store.o randombytes_host.o
+HOST_OBJS := main.o bench.o cmd_kem.o cmd_sig.o cmd_store.o cmd_bench.o randombytes_host.o
 
 OBJS := $(HOST_OBJS) $(KEM_OBJS) $(SIG_OBJS) $(COMM_OBJS)
 
@@ -34,16 +34,18 @@ KEM_CFLAGS := $(CFLAGS) -I$(KEM_DIR)
 SIG_CFLAGS := $(CFLAGS) -I$(SIG_DIR)
 
 BINARY = optee_example_pqc_ping
+ALIAS  = pqc_ping
 
 .PHONY: all
 all: $(BINARY)
+	ln -sf $(BINARY) $(ALIAS)
 
 $(BINARY): $(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDADD)
 
 .PHONY: clean
 clean:
-	rm -f $(OBJS) $(BINARY)
+	rm -f $(OBJS) $(BINARY) $(ALIAS)
 
 # Host sources — main.c and cmd_kem/sig include both crypto api headers
 main.o: main.c

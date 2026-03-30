@@ -37,6 +37,20 @@
 #define TA_PQC_PING_CMD_SIG_STATUS      17 /* report key state (value out) */
 #define TA_PQC_PING_CMD_SIG_DESTROY     18 /* wipe memory + delete storage */
 
+#define TA_PQC_PING_CMD_KEM_GET_PK      19 /* read persisted pk, return to host */
+#define TA_PQC_PING_CMD_SIG_GET_PK      20 /* read persisted pk, return to host */
+
+/* Secure-world micro-benchmarks — timing taken inside the TA */
+#define TA_PQC_PING_CMD_KEM_KEYGEN_MICRO 21 /* loop×keygen timed in TA */
+#define TA_PQC_PING_CMD_KEM_DECAPS_MICRO 22 /* loop×decaps timed in TA */
+#define TA_PQC_PING_CMD_SIG_KEYGEN_MICRO 23 /* loop×keygen timed in TA */
+#define TA_PQC_PING_CMD_SIG_SIGN_MICRO   24 /* loop×sign   timed in TA */
+
+/* Memory profiling — Day 10 */
+#define TA_PQC_PING_CMD_MEM_INFO         25 /* report stack/data sizes + heap probe */
+#define TA_PQC_PING_CMD_KEM_STRESS       26 /* keygen+encaps+decaps, all on TA stack */
+#define TA_PQC_PING_CMD_SIG_STRESS       27 /* keygen+sign+verify, all on TA stack */
+
 /* Key status bits (returned by KEM_STATUS / SIG_STATUS) */
 #define PQC_KEY_ABSENT    0  /* no key in memory, not persisted */
 #define PQC_KEY_IN_MEMORY 1  /* key loaded in session */
@@ -62,6 +76,12 @@ struct pqc_info_out {
     uint32_t sig_pk;
     uint32_t sig_sk;
     uint32_t sig_sig;
+};
+
+struct pqc_mem_info {
+    uint32_t stack_size;       /* TA_STACK_SIZE (compile-time) */
+    uint32_t data_size;        /* TA_DATA_SIZE  (compile-time) */
+    uint32_t heap_avail;       /* largest TEE_Malloc that succeeds (probed) */
 };
 
 #endif /*TA_PQC_PING_H*/

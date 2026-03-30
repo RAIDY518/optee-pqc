@@ -11,6 +11,8 @@
 /* Host-side synthetic command IDs (not TA command IDs) */
 #define HOST_CMD_KEM_CROSSTEST  100
 #define HOST_CMD_SIG_CROSSTEST  101
+#define HOST_CMD_KEM_VALIDATE   102
+#define HOST_CMD_SIG_VALIDATE   103
 
 /* All shared state for a benchmark run */
 struct bench_ctx {

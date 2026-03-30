@@ -13,6 +13,7 @@
 #include "cmd_kem.h"
 #include "cmd_sig.h"
 #include "cmd_store.h"
+#include "cmd_bench.h"
 
 #define DEFAULT_LOOP   100
 #define DEFAULT_WARMUP 10
@@ -64,6 +65,15 @@ int main(int argc, char *argv[])
 			else if (!strcmp(argv[i], "sig-load"))        cmd = TA_PQC_PING_CMD_SIG_LOAD;
 			else if (!strcmp(argv[i], "sig-status"))      cmd = TA_PQC_PING_CMD_SIG_STATUS;
 			else if (!strcmp(argv[i], "sig-destroy"))     cmd = TA_PQC_PING_CMD_SIG_DESTROY;
+			else if (!strcmp(argv[i], "kem-validate"))       cmd = HOST_CMD_KEM_VALIDATE;
+			else if (!strcmp(argv[i], "sig-validate"))       cmd = HOST_CMD_SIG_VALIDATE;
+			else if (!strcmp(argv[i], "kem-keygen-micro"))   cmd = TA_PQC_PING_CMD_KEM_KEYGEN_MICRO;
+			else if (!strcmp(argv[i], "kem-decaps-micro"))   cmd = TA_PQC_PING_CMD_KEM_DECAPS_MICRO;
+			else if (!strcmp(argv[i], "sig-keygen-micro"))   cmd = TA_PQC_PING_CMD_SIG_KEYGEN_MICRO;
+			else if (!strcmp(argv[i], "sig-sign-micro"))     cmd = TA_PQC_PING_CMD_SIG_SIGN_MICRO;
+			else if (!strcmp(argv[i], "mem-info"))              cmd = TA_PQC_PING_CMD_MEM_INFO;
+			else if (!strcmp(argv[i], "kem-stress"))            cmd = TA_PQC_PING_CMD_KEM_STRESS;
+			else if (!strcmp(argv[i], "sig-stress"))            cmd = TA_PQC_PING_CMD_SIG_STRESS;
 			else errx(1, "unknown --cmd: %s", argv[i]);
 		} else if (!strcmp(argv[i], "--loop") && i + 1 < argc) {
 			loop = atoi(argv[++i]);
@@ -124,6 +134,78 @@ int main(int argc, char *argv[])
 		goto done;
 	}
 
+	/* --cmd mem-info: one-shot, report TA memory configuration */
+	if (cmd == TA_PQC_PING_CMD_MEM_INFO) {
+		struct pqc_mem_info mi;
+		memset(&mi, 0, sizeof(mi));
+		memset(&op, 0, sizeof(op));
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_OUTPUT,
+						 TEEC_NONE, TEEC_NONE, TEEC_NONE);
+		op.params[0].tmpref.buffer = &mi;
+		op.params[0].tmpref.size   = sizeof(mi);
+		res = TEEC_InvokeCommand(&sess, cmd, &op, &origin);
+		if (res != TEEC_SUCCESS)
+			errx(1, "mem-info invoke failed 0x%x origin 0x%x",
+			     res, origin);
+		printf("TA_STACK_SIZE = %" PRIu32 " (%u KB)\n",
+		       mi.stack_size, mi.stack_size / 1024);
+		printf("TA_DATA_SIZE  = %" PRIu32 " (%u KB)\n",
+		       mi.data_size, mi.data_size / 1024);
+		printf("heap_avail    = %" PRIu32 " (%u KB)\n",
+		       mi.heap_avail, mi.heap_avail / 1024);
+		goto done;
+	}
+
+	/* --cmd kem-stress / sig-stress: benchmarked stack stress test */
+	if (cmd == TA_PQC_PING_CMD_KEM_STRESS ||
+	    cmd == TA_PQC_PING_CMD_SIG_STRESS) {
+		const char *tag = (cmd == TA_PQC_PING_CMD_KEM_STRESS)
+				  ? "KEM-STRESS" : "SIG-STRESS";
+		const char *csv_tag = (cmd == TA_PQC_PING_CMD_KEM_STRESS)
+				      ? "kem-stress" : "sig-stress";
+		uint32_t fail_count = 0;
+
+		/* Warmup */
+		for (int i = 0; i < warmup; i++) {
+			memset(&op, 0, sizeof(op));
+			op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_OUTPUT,
+							 TEEC_NONE, TEEC_NONE, TEEC_NONE);
+			res = TEEC_InvokeCommand(&sess, cmd, &op, &origin);
+			if (res != TEEC_SUCCESS)
+				errx(1, "warmup %s failed 0x%x", csv_tag, res);
+		}
+
+		/* Measured loop */
+		for (int i = 0; i < loop; i++) {
+			struct timespec t1, t2;
+
+			memset(&op, 0, sizeof(op));
+			op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_OUTPUT,
+							 TEEC_NONE, TEEC_NONE, TEEC_NONE);
+
+			clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
+			res = TEEC_InvokeCommand(&sess, cmd, &op, &origin);
+			clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
+
+			if (res != TEEC_SUCCESS)
+				errx(1, "%s invoke failed 0x%x", csv_tag, res);
+
+			samples[i] = diff_ns(&t1, &t2);
+
+			if (op.params[0].value.a != 0)
+				fail_count++;
+
+			if (csv)
+				fprintf(csv, "%d,%s,%" PRIu64 ",%u\n",
+					i, csv_tag, samples[i],
+					(op.params[0].value.a == 0) ? 1u : 0u);
+		}
+
+		print_stats(samples, (size_t)loop, tag);
+		printf("  pass  = %u/%d\n", (unsigned)(loop - fail_count), loop);
+		goto done;
+	}
+
 	/* Build shared benchmark context */
 	struct bench_ctx bctx = {
 		.sess         = &sess,
@@ -159,6 +241,12 @@ int main(int argc, char *argv[])
 	if (cmd == TA_PQC_PING_CMD_SIG_LOAD)        { run_sig_load(&bctx);        goto done; }
 	if (cmd == TA_PQC_PING_CMD_SIG_STATUS)      { run_sig_status(&bctx);      goto done; }
 	if (cmd == TA_PQC_PING_CMD_SIG_DESTROY)     { run_sig_destroy(&bctx);     goto done; }
+	if (cmd == HOST_CMD_KEM_VALIDATE)                { run_kem_validate(&bctx);    goto done; }
+	if (cmd == HOST_CMD_SIG_VALIDATE)                { run_sig_validate(&bctx);    goto done; }
+	if (cmd == TA_PQC_PING_CMD_KEM_KEYGEN_MICRO)     { run_kem_keygen_micro(&bctx); goto done; }
+	if (cmd == TA_PQC_PING_CMD_KEM_DECAPS_MICRO)     { run_kem_decaps_micro(&bctx); goto done; }
+	if (cmd == TA_PQC_PING_CMD_SIG_KEYGEN_MICRO)     { run_sig_keygen_micro(&bctx); goto done; }
+	if (cmd == TA_PQC_PING_CMD_SIG_SIGN_MICRO)       { run_sig_sign_micro(&bctx);   goto done; }
 
 	/* Regular KEM benchmark commands (empty/ping/kem-selftest/keygen/encaps/decaps) */
 	if (cmd == TA_PQC_PING_CMD_KEM_ENCAPS ||

@@ -6,6 +6,7 @@ srcs-y += pqc_ping_ta.c
 srcs-y += cmd_kem.c
 srcs-y += cmd_sig.c
 srcs-y += cmd_store.c
+srcs-y += cmd_bench.c
 srcs-y += pqclean/common/randombytes.c
 srcs-y += pqclean/common/fips202.c
 

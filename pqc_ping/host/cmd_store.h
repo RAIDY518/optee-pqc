@@ -14,4 +14,8 @@ void run_sig_load(struct bench_ctx *ctx);
 void run_sig_status(struct bench_ctx *ctx);
 void run_sig_destroy(struct bench_ctx *ctx);
 
+/* Validate that the loaded session key works end-to-end. */
+void run_kem_validate(struct bench_ctx *ctx);
+void run_sig_validate(struct bench_ctx *ctx);
+
 #endif /* CMD_STORE_H */

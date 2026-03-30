@@ -22,4 +22,8 @@ TEE_Result ta_cmd_sig(uint32_t cmd_id, uint32_t param_types,
 TEE_Result ta_cmd_store(uint32_t cmd_id, uint32_t param_types,
 			TEE_Param params[4], struct pqc_session *session);
 
+/* Micro-benchmarks: no session state needed */
+TEE_Result ta_cmd_bench(uint32_t cmd_id, uint32_t param_types,
+			TEE_Param params[4]);
+
 #endif /* TA_INTERNAL_H */

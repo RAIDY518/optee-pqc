@@ -1,11 +1,13 @@
 #include <err.h>
 #include <inttypes.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 
 #include "../ta/pqclean/sig/api.h"
 #include "bench.h"
 #include "cmd_sig.h"
+#include "cmd_store.h"
 
 static const uint8_t SIG_TEST_MSG[]  = "pqc-day6-test-message";
 #define SIG_TEST_MSG_LEN (sizeof(SIG_TEST_MSG) - 1)
@@ -136,7 +138,7 @@ void run_sig_crosstest(struct bench_ctx *ctx)
 			errx(1, "sig-crosstest warmup failed 0x%x", res);
 	}
 
-	/* Measured loop */
+	/* Measured loop — timing wraps only TEEC_InvokeCommand (path latency) */
 	for (int i = 0; i < ctx->loop; i++) {
 		struct timespec t1, t2;
 		size_t siglen;
@@ -144,19 +146,19 @@ void run_sig_crosstest(struct bench_ctx *ctx)
 		setup_sig_sign_op(&op, ctx);
 
 		clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
-
 		res = TEEC_InvokeCommand(ctx->sess, TA_PQC_PING_CMD_SIG_SIGN,
 					 &op, &ctx->origin);
+		clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
+
 		if (res != TEEC_SUCCESS)
 			errx(1, "sig-crosstest sign failed 0x%x", res);
 
+		/* Host-side verify — outside timed region */
 		siglen = op.params[1].tmpref.size;
 		int vret = PQCLEAN_MLDSA44_CLEAN_crypto_sign_verify(
 				ctx->sig_buf, siglen,
 				SIG_TEST_MSG, SIG_TEST_MSG_LEN,
 				ctx->sig_pk);
-
-		clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
 
 		ctx->samples[i] = diff_ns(&t1, &t2);
 		uint32_t pass = (vret == 0) ? 1 : 0;
@@ -171,4 +173,56 @@ void run_sig_crosstest(struct bench_ctx *ctx)
 	print_stats(ctx->samples, (size_t)ctx->loop, "SIG-CROSSTEST");
 	printf("  pass  = %u/%d\n",
 	       (unsigned)(ctx->loop - ctx->fail_count), ctx->loop);
+}
+
+void run_sig_validate(struct bench_ctx *ctx)
+{
+	TEEC_Operation op;
+	TEEC_Result    res;
+
+	/* Step 0: load sk from storage into this session */
+	memset(&op, 0, sizeof(op));
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_NONE, TEEC_NONE, TEEC_NONE, TEEC_NONE);
+	res = TEEC_InvokeCommand(ctx->sess, TA_PQC_PING_CMD_SIG_LOAD,
+				 &op, &ctx->origin);
+	if (res != TEEC_SUCCESS)
+		errx(1, "sig-validate: load failed 0x%x origin 0x%x", res, ctx->origin);
+
+	/* Step 1: retrieve pk from secure storage */
+	memset(&op, 0, sizeof(op));
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_OUTPUT,
+					 TEEC_NONE, TEEC_NONE, TEEC_NONE);
+	op.params[0].tmpref.buffer = ctx->sig_pk;
+	op.params[0].tmpref.size   = PQC_SIG_PUBLICKEYBYTES;
+	res = TEEC_InvokeCommand(ctx->sess, TA_PQC_PING_CMD_SIG_GET_PK,
+				 &op, &ctx->origin);
+	if (res != TEEC_SUCCESS)
+		errx(1, "sig-get-pk failed 0x%x origin 0x%x", res, ctx->origin);
+
+	/* Step 2: TA signs with loaded session sk */
+	memset(&op, 0, sizeof(op));
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
+					 TEEC_MEMREF_TEMP_OUTPUT,
+					 TEEC_NONE, TEEC_NONE);
+	op.params[0].tmpref.buffer = (void *)SIG_TEST_MSG;
+	op.params[0].tmpref.size   = SIG_TEST_MSG_LEN;
+	op.params[1].tmpref.buffer = ctx->sig_buf;
+	op.params[1].tmpref.size   = PQC_SIG_BYTES;
+	res = TEEC_InvokeCommand(ctx->sess, TA_PQC_PING_CMD_SIG_SIGN,
+				 &op, &ctx->origin);
+	if (res != TEEC_SUCCESS)
+		errx(1, "sig-sign failed 0x%x origin 0x%x", res, ctx->origin);
+
+	size_t siglen = op.params[1].tmpref.size;
+
+	/* Step 3: host verifies with retrieved pk */
+	int vret = PQCLEAN_MLDSA44_CLEAN_crypto_sign_verify(
+			ctx->sig_buf, siglen,
+			SIG_TEST_MSG, SIG_TEST_MSG_LEN,
+			ctx->sig_pk);
+
+	int pass = (vret == 0);
+	printf("sig-validate: %s\n", pass ? "PASS" : "FAIL");
+	if (!pass)
+		errx(1, "sig-validate: signature verification failed");
 }

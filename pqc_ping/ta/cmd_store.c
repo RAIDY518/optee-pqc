@@ -3,13 +3,17 @@
 #include <pqc_ping_ta.h>
 #include "ta_internal.h"
 
-/* Persistent object IDs for KEM and SIG secret keys */
+/* Persistent object IDs — sk and pk stored separately */
 static const char KEM_SK_ID[] = "pqc_kem_sk";
+static const char KEM_PK_ID[] = "pqc_kem_pk";
 static const char SIG_SK_ID[] = "pqc_sig_sk";
+static const char SIG_PK_ID[] = "pqc_sig_pk";
 #define KEM_SK_ID_LEN (sizeof(KEM_SK_ID) - 1)
+#define KEM_PK_ID_LEN (sizeof(KEM_PK_ID) - 1)
 #define SIG_SK_ID_LEN (sizeof(SIG_SK_ID) - 1)
+#define SIG_PK_ID_LEN (sizeof(SIG_PK_ID) - 1)
 
-/* Write raw bytes to a named persistent data object (overwrite if exists). */
+/* Write raw bytes to a persistent data object (overwrite if exists). */
 static TEE_Result store_write(const char *id, uint32_t id_len,
 			      const void *data, uint32_t data_len)
 {
@@ -27,7 +31,7 @@ static TEE_Result store_write(const char *id, uint32_t id_len,
 	return res;
 }
 
-/* Read raw bytes from a named persistent data object. */
+/* Read raw bytes from a persistent data object. */
 static TEE_Result store_read(const char *id, uint32_t id_len,
 			     void *buf, uint32_t buf_len)
 {
@@ -94,8 +98,16 @@ TEE_Result ta_cmd_store(uint32_t cmd_id, uint32_t param_types,
 		TEE_PQC_KEM_KEYPAIR(params[0].memref.buffer, session->kem_sk);
 		session->kem_sk_valid = 1;
 		params[0].memref.size = TEE_PQC_KEM_PUBLICKEYBYTES;
-		return store_write(KEM_SK_ID, KEM_SK_ID_LEN,
-				   session->kem_sk, TEE_PQC_KEM_SECRETKEYBYTES);
+
+		/* Persist both sk and pk so pk can be recovered after restart */
+		TEE_Result res = store_write(KEM_SK_ID, KEM_SK_ID_LEN,
+					     session->kem_sk,
+					     TEE_PQC_KEM_SECRETKEYBYTES);
+		if (res != TEE_SUCCESS)
+			return res;
+		return store_write(KEM_PK_ID, KEM_PK_ID_LEN,
+				   params[0].memref.buffer,
+				   TEE_PQC_KEM_PUBLICKEYBYTES);
 	}
 
 	case TA_PQC_PING_CMD_KEM_LOAD:
@@ -145,7 +157,27 @@ TEE_Result ta_cmd_store(uint32_t cmd_id, uint32_t param_types,
 		TEE_MemFill(session->kem_sk, 0, TEE_PQC_KEM_SECRETKEYBYTES);
 		session->kem_sk_valid = 0;
 		store_delete(KEM_SK_ID, KEM_SK_ID_LEN);
+		store_delete(KEM_PK_ID, KEM_PK_ID_LEN);
 		return TEE_SUCCESS;
+	}
+
+	case TA_PQC_PING_CMD_KEM_GET_PK:
+	{
+		uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_OUTPUT,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE);
+		if (param_types != exp)
+			return TEE_ERROR_BAD_PARAMETERS;
+		if (params[0].memref.size < TEE_PQC_KEM_PUBLICKEYBYTES)
+			return TEE_ERROR_SHORT_BUFFER;
+
+		TEE_Result res = store_read(KEM_PK_ID, KEM_PK_ID_LEN,
+					    params[0].memref.buffer,
+					    TEE_PQC_KEM_PUBLICKEYBYTES);
+		if (res == TEE_SUCCESS)
+			params[0].memref.size = TEE_PQC_KEM_PUBLICKEYBYTES;
+		return res;
 	}
 
 	/* ---- SIG lifecycle -------------------------------------------- */
@@ -164,8 +196,15 @@ TEE_Result ta_cmd_store(uint32_t cmd_id, uint32_t param_types,
 		TEE_PQC_SIG_KEYPAIR(params[0].memref.buffer, session->sig_sk);
 		session->sig_sk_valid = 1;
 		params[0].memref.size = TEE_PQC_SIG_PUBLICKEYBYTES;
-		return store_write(SIG_SK_ID, SIG_SK_ID_LEN,
-				   session->sig_sk, TEE_PQC_SIG_SECRETKEYBYTES);
+
+		TEE_Result res = store_write(SIG_SK_ID, SIG_SK_ID_LEN,
+					     session->sig_sk,
+					     TEE_PQC_SIG_SECRETKEYBYTES);
+		if (res != TEE_SUCCESS)
+			return res;
+		return store_write(SIG_PK_ID, SIG_PK_ID_LEN,
+				   params[0].memref.buffer,
+				   TEE_PQC_SIG_PUBLICKEYBYTES);
 	}
 
 	case TA_PQC_PING_CMD_SIG_LOAD:
@@ -215,7 +254,27 @@ TEE_Result ta_cmd_store(uint32_t cmd_id, uint32_t param_types,
 		TEE_MemFill(session->sig_sk, 0, TEE_PQC_SIG_SECRETKEYBYTES);
 		session->sig_sk_valid = 0;
 		store_delete(SIG_SK_ID, SIG_SK_ID_LEN);
+		store_delete(SIG_PK_ID, SIG_PK_ID_LEN);
 		return TEE_SUCCESS;
+	}
+
+	case TA_PQC_PING_CMD_SIG_GET_PK:
+	{
+		uint32_t exp = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_OUTPUT,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE);
+		if (param_types != exp)
+			return TEE_ERROR_BAD_PARAMETERS;
+		if (params[0].memref.size < TEE_PQC_SIG_PUBLICKEYBYTES)
+			return TEE_ERROR_SHORT_BUFFER;
+
+		TEE_Result res = store_read(SIG_PK_ID, SIG_PK_ID_LEN,
+					    params[0].memref.buffer,
+					    TEE_PQC_SIG_PUBLICKEYBYTES);
+		if (res == TEE_SUCCESS)
+			params[0].memref.size = TEE_PQC_SIG_PUBLICKEYBYTES;
+		return res;
 	}
 
 	default:

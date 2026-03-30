@@ -31,6 +31,7 @@ add_executable (${PROJECT_NAME}
     host/cmd_kem.c
     host/cmd_sig.c
     host/cmd_store.c
+    host/cmd_bench.c
     host/randombytes_host.c
     $<TARGET_OBJECTS:pqc_kem>
     $<TARGET_OBJECTS:pqc_sig>
